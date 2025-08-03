@@ -1,0 +1,390 @@
+ReasonAndCompassion/
+├── __init__.py
+├── config.py
+├── pyproject.toml
+├── preprocessor/
+│   ├── __init__.py
+│   ├── botok_analyzer.py       （Botok分析器 - 负责藏文文本的语言学分析）
+│   ├── term_protector.py       （术语保护器 - 支持语境感知的术语保护和替换）
+│   └── context_extractor.py    （上下文提取器 - 提取并组织翻译所需的上下文信息6）
+├── translator/
+│   ├── __init__.py
+│   ├── nllb_wrapper.py         （NLLB模型封装器）
+│   └── translation_manager.py  （翻译管理器 - 协调整个翻译流程）
+├── postprocessor/
+│   ├── __init__.py
+│   ├── term_restorer.py        （术语恢复器 - 将占位符替换回正确的中文术语）
+│   ├── grammar_corrector.py    （语法修正器 - 根据藏文语法信息修正中文译文）
+│   ├── quality_controller.py   （质量控制器）
+│   ├── adapter.py              （适配器 - 确保预处理和后处理之间的兼容性）
+│   └── text_finalizer.py       （文本终结器 - 最终的文本处理和格式化）
+├── utils/
+│   ├── __init__.py
+│   ├── concept relation_extractor.py   （概念关系提取器 - 从对译文本中提取佛教概念关系）
+│   ├── concept_relation_manager.py     （概念关系管理器 - 管理佛教概念知识图谱）
+│   ├── term_database.py                （术语数据库管理 - 支持语境和功能标签的术语系统）
+│   ├── label_manager.py                （标签管理器 - 管理和统一术语数据库中的上下文和功能标签）
+│   └── helpers.py                      （辅助工具函数）
+└── main.py
+
+
++--------------------------------------------------------------------------------------------+
+|                                   系统架构层次图                                              |
++--------------------------------------------------------------------------------------------+
+|                                                                                             |
+|  +------------------------+        +------------------------+      +--------------------+   |
+|  |      协调层             |        |       知识管理层         |      |     工具支持层       |   |
+|  |------------------------|        |------------------------|      |--------------------|   |
+|  | - TranslationManager   |◄----►  | - TermDatabase         |◄---► | - TextUtils        |   |
+|  | - 整体流程协调            |       | - ConceptRelationManager|      | - FileUtils        |   |
+|  |                        |        | - ConceptGraph         |      | - ValidationUtils  |   |
+|  +------------------------+        +------------------------+      | - StatisticsUtils  |   |
+|             ▲                                 ▲                    +--------------------+   |
+|             |                                 |                              ▲              |
+|             ▼                                 ▼                              |              |
+|  +------------------------+        +------------------------+                |              |
+|  |      预处理层            |        |       后处理层          |                |              |
+|  |------------------------|        |------------------------|                |              |
+|  | - BotokAnalyzer        |        | - TermRestorer         |                |              |
+|  | - TermProtector        |        | - GrammarCorrector     |                |              |
+|  | - ContextExtractor     |        | - QualityController    |                |              |
+|  |                        |        | - TextFinalizer        |                |              |
+|  +------------------------+        +------------------------+                |              |
+|             ▲                                 ▲                              |              |
+|             |                                 |                              |              |
+|             +---------------+      +----------+                              |              |
+|                             ▼      ▼                                         |              |
+|                      +------------------------+                              |              |
+|                      |      翻译核心层          |                              |              |
+|                      |------------------------|                              |              |
+|                      | - NLLBTranslator       |◄-----------------------------+              |
+|                      | - 其他翻译引擎           |                                             |
+|                      +------------------------+                                             |
+|                                                                                             |
++---------------------------------------------------------------------------------------------+
+
+关键组件功能概述
+1. 核心组件
+组件类别	组件名称	主要功能
+协调层	TranslationManager	控制整体翻译流程，协调各组件工作
+预处理	BotokAnalyzer	藏文语言学分析
+        TermProtector	术语识别与保护
+        ContextExtractor	上下文信息提取与整合
+翻译核心	NLLBTranslator	执行核心翻译
+后处理	TermRestorer	还原和翻译术语
+        GrammarCorrector	中文语法修正
+        QualityController	语义质量优化
+        TextFinalizer	最终格式化与美化
+知识管理	TermDatabase	术语存储与查询
+        ConceptRelationManager	管理佛教概念关系
+        ConceptRelationExtractor	从文本中提取概念关系
+工具支持	TextUtils	文本处理工具
+        FileUtils	文件操作工具
+        ValidationUtils	翻译质量验证
+        StatisticsUtils	翻译统计分析
+2. 新增组件功能
+2.1 工具类（helpers.py）
+TextUtils类提供：
+藏文规范化（normalize_tibetan）
+语言检测（is_tibetan）
+混合文本分割（split_mixed_text）
+翻译文本清理（clean_translation）
+
+ValidationUtils类提供：
+翻译对验证（validate_translation_pair）
+中文检测（_is_chinese）
+长度比例检查（_check_length_ratio）
+未翻译内容检查（_check_untranslated）
+
+2.2 概念关系管理（concept_relation_manager.py）
+ConceptRelationManager类提供：
+从数据库加载概念关系（_load_relations）
+查询概念关系（get_relations）
+添加新关系（add_relation）
+删除关系（delete_relation）
+查找概念间关系路径（get_relation_path）
+检查关系一致性（check_consistency）
+
+1.完整翻译流程
++---------------+     +---------------+     +---------------+     +---------------+     +---------------+
+|               |     |               |     |               |     |               |     |               |
+|  藏文文本输入    +---->+ 文本预处理阶段  +---->+  核心翻译阶段    +---->+  文本后处理阶段  +---->+  最终翻译输出   |
+|               |     |               |     |               |     |               |     |               |
++---------------+     +------+--------+     +-------+-------+     +-------+-------+     +---------------+
+                             |                      |                     |
+                             v                      v                     v
+                     +---------------+     +---------------+     +---------------+
+                     |               |     |               |     |               |
+                     | 术语保护映射     |     |  原始翻译结果   |     |  术语恢复结果   |
+                     |               |     |               |     |               |
+                     +-------+-------+     +-------+-------+     +-------+-------+
+                             |                      |                     |
+                             v                      v                     v
+                     +---------------+     +---------------+     +---------------+
+                     |               |     |               |     |               |
+                     | 上下文信息对象   +---->+  上下文对象     +---->+  上下文对象     |
+                     |               |     |               |     |               |
+                     +---------------+     +---------------+     +---------------+
+
+ 2. 文本预处理阶段详解
+ def _preprocess(self, text: str) -> Dict:
+    # 1. 文本规范化 - 使用TextUtils工具
+    normalized_text = TextUtils.normalize_tibetan(text)
+
+    # 2. Botok分析
+    botok_analysis = self.botok_analyzer.analyze(normalized_text)
+    botok_analysis['original_text'] = normalized_text
+
+    # 3. 术语保护
+    identified_terms = botok_analysis.get('terms', [])
+    protected_text, protection_map = self.term_protector.protect_terms(
+        normalized_text, identified_terms
+    )
+
+    # 4. 提取上下文
+    context = self.context_extractor.extract_context(
+        botok_analysis, protection_map
+    )
+
+    # 5. 佛教语境检测
+    context_analysis = self.context_detector.detect(normalized_text)
+
+    # 6. 丰富上下文信息
+    context.buddhist_context = context_analysis.get('primary_context', 'GENERAL')
+    context.context_confidence = context_analysis.get('context_confidence', 0.0)
+    context.function_type = context_analysis.get('primary_function', 'GENERAL_TERM')
+
+    return {
+        'protected_text': protected_text,
+        'context': context,
+        'botok_analysis': botok_analysis
+    }
+
+3. 翻译处理阶段详解
+def _translate_core(self, protected_text: str, context) -> str:
+    # 1. 判断是否需要分句处理
+    if self._should_split_sentences(protected_text, context):
+        # 分句翻译处理
+        sentences = self._split_text_by_boundaries(protected_text, context.sentence_boundaries)
+
+        # 批量翻译
+        if len(sentences) > 1:
+            translated_sentences = self.nllb_translator.translate_batch(sentences)
+        else:
+            translated_sentences = [self.nllb_translator.translate(sentences[0])]
+
+        # 合并翻译结果
+        return self._merge_sentence_translations(translated_sentences, context)
+    else:
+        # 整段翻译
+        return self.nllb_translator.translate(protected_text)
+
+4. 后处理阶段详解
+def _postprocess(self, raw_translation: str, context) -> str:
+    # 1. 恢复术语
+    text = self.term_restorer.restore(raw_translation, context)
+
+    # 2. 语法修正
+    text = self.grammar_corrector.correct(text, context)
+
+    # 3. 质量控制和语义优化
+    text = self.quality_controller.refine(text, context)
+
+    # 4. 最终文本格式化
+    text = self.text_finalizer.finalize(text, context)
+
+    # 5. 清理文本
+    text = TextUtils.clean_translation(text)
+
+    return text
+
+
+术语和概念关系处理
++-------------------+      +---------------------+      +------------------+
+|                   |      |                     |      |                  |
+| 术语识别与保护阶段    +----->+ 概念关系管理器查询     +----->+ 丰富翻译上下文      |
+|                   |      |                     |      |                  |
++-------------------+      +---------------------+      +------------------+
+# 概念关系查询示例
+def _enrich_with_concept_relations(self, term: str, context):
+    """使用概念关系丰富术语上下文"""
+    relations = self.concept_relation_manager.get_relations(term)
+
+    if relations:
+        # 记录相关概念
+        related_concepts = []
+        for rel in relations:
+            related_concepts.append({
+                'concept': rel['target'],
+                'relation_type': rel['type'],
+                'confidence': rel['confidence']
+            })
+
+        # 添加到上下文
+        context.related_concepts = related_concepts
+
+        # 处理特殊关系，如对立概念
+        opposite_concepts = [r['target'] for r in
+                            self.concept_relation_manager.get_relations(term, 'opposite')]
+        if opposite_concepts:
+            context.opposite_concepts = opposite_concepts
+
+术语恢复流程
++------------------+      +------------------------+      +------------------+
+|                  |      |                        |      |                  |
+| 原始翻译结果       +----->+ 术语恢复与最佳翻译选择      +----->+ 术语恢复后文本      |
+|                  |      |                        |      |                  |
++------------------+      +------------------------+      +------------------+
+
+def _select_best_translation(self, text: str, placeholder: str, term_info: Dict) -> str:
+    """根据上下文选择最佳翻译"""
+    tibetan_term = term_info.get('tibetan', '')
+    term_context = term_info.get('context', {})
+
+    # 从术语数据库获取候选翻译
+    translations = self.term_database.get_all_translations(tibetan_term)
+
+    if not translations:
+        return term_info.get('default_translation', tibetan_term)
+
+    # 根据佛教语境选择最佳翻译
+    buddhist_context = term_context.get('detected_context', 'GENERAL')
+    function_type = term_context.get('detected_function', 'GENERAL_TERM')
+
+    # 按照语境和功能匹配度、置信度排序
+    scored_translations = []
+    for trans in translations:
+        score = self._calculate_translation_score(
+            trans, buddhist_context, function_type, text, placeholder
+        )
+        scored_translations.append((trans, score))
+
+    # 选择得分最高的翻译
+    best_translation = max(scored_translations, key=lambda x: x[1])
+    return best_translation[0]
+
+质量控制与评估
+1. 质量评估指标
+def _evaluate_quality(self, source: str, translation: str, context) -> float:
+    scores = []
+
+    # 1. 术语覆盖率 (30%)
+    term_coverage = self._calculate_term_coverage(translation, context.term_mappings)
+    scores.append(term_coverage * 0.3)
+
+    # 2. 句子完整性 (20%)
+    sentence_completeness = self._calculate_sentence_completeness(translation, context)
+    scores.append(sentence_completeness * 0.2)
+
+    # 3. 语法正确性 (20%)
+    grammar_score = self._calculate_grammar_score(translation, context)
+    scores.append(grammar_score * 0.2)
+
+    # 4. 流畅度 (20%)
+    fluency_score = self._calculate_fluency_score(translation)
+    scores.append(fluency_score * 0.2)
+
+    # 5. 长度比例合理性 (10%)
+    length_ratio_score = self._calculate_length_ratio_score(source, translation)
+    scores.append(length_ratio_score * 0.1)
+
+    # 综合得分
+    total_score = sum(scores)
+    return min(total_score, 1.0)
+
+2. 翻译验证
+def validate_translation_pair(source: str, translation: str) -> Dict[str, bool]:
+    """验证翻译对的基本质量"""
+    checks = {
+        'source_not_empty': bool(source.strip()),
+        'translation_not_empty': bool(translation.strip()),
+        'source_is_tibetan': TextUtils.is_tibetan(source),
+        'translation_is_chinese': ValidationUtils._is_chinese(translation),
+        'reasonable_length_ratio': ValidationUtils._check_length_ratio(source, translation),
+        'no_untranslated_terms': ValidationUtils._check_untranslated(translation),
+    }
+
+    return checks
+
+系统集成与扩展
+1. 文件处理工具
+def process_directory(input_dir: Path, output_dir: Path,
+                     processor_func, file_pattern: str = '*.txt'):
+    """批量处理目录中的文件"""
+    input_files = list(input_dir.glob(file_pattern))
+
+    for input_file in input_files:
+        try:
+            # 读取输入文件
+            content = FileUtils.read_text_file(input_file)
+
+            # 处理内容
+            processed = processor_func(content)
+
+            # 构建输出路径
+            relative_path = input_file.relative_to(input_dir)
+            output_file = output_dir / relative_path
+
+            # 写入输出文件
+            FileUtils.write_text_file(output_file, processed)
+
+            logger.info(f"Processed: {input_file} -> {output_file}")
+        except Exception as e:
+            logger.error(f"Failed to process {input_file}: {e}")
+
+2. 长文档处理
+def translate_document(self, document: str, progress_callback=None) -> Dict:
+    """
+    翻译长文档，支持进度回调
+    """
+    # 分段处理长文档
+    paragraphs = self._split_document(document)
+    translations = []
+    total_paragraphs = len(paragraphs)
+
+    logger.info(f"Translating document with {total_paragraphs} paragraphs")
+
+    for i, paragraph in enumerate(paragraphs):
+        if progress_callback:
+            progress_callback(i, total_paragraphs)
+
+        # 翻译段落
+        result = self.translate(paragraph)
+        translations.append(result['translation'])
+
+        # 记录进度
+        logger.debug(f"Translated paragraph {i + 1}/{total_paragraphs}")
+
+    # 合并结果
+    final_translation = '\n\n'.join(translations)
+
+    return {
+        'translation': final_translation,
+        'metadata': {
+            'total_paragraphs': total_paragraphs,
+            'source_length': len(document),
+            'translation_length': len(final_translation)
+        }
+    }
+
+
+
+
+系统优势与特色
+完整的模块化设计：系统采用高度模块化架构，各组件接口清晰，便于扩展和维护
+
+深度藏文语言分析：使用BotokAnalyzer进行藏文形态分析和句法分析
+
+丰富的上下文传递机制：TranslationContext对象贯穿整个流程，确保信息不丢失
+
+佛教概念知识图谱：ConceptRelationManager维护概念关系，提高术语翻译准确性
+
+多层次质量控制：从术语准确性、语法正确性到语义连贯性的全方位质量保障
+
+适应多种文本格式：支持诗偈、列举、长篇等多种文本格式的翻译和排版
+
+文本处理工具集：提供丰富的文本处理和验证工具，便于预处理和后处理
+
+概念关系检查：通过概念关系图，确保翻译在概念关系上的一致性和准确性
+
+

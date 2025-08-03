@@ -1,0 +1,20 @@
+# 核心依赖
+torch>=2.0.0
+transformers>=4.30.0
+numpy>=1.24.0
+pandas>=2.0.0
+tqdm>=4.65.0
+
+# 藏文处理依赖
+botok>=0.8.3  # 从GitHub安装: git+https://github.com/OpenPecha/Botok.git
+
+# 数据处理依赖
+sqlite3>=3.35.0  # 通常内置于Python
+jieba>=0.42.1
+regex>=2022.10.31
+
+# 开发和测试依赖
+pytest>=7.3.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.3.0

@@ -1,0 +1,37 @@
+-- 示例句子：རྒྱལ་པོས་སློབ་མ་ལ་ཆོས་བསྟན་ཏོ། (国王给学生讲法)
+{
+  "text_analysis": [
+    {
+      "text": "རྒྱལ་པོ",
+      "role": "agent",              -- 施事者：国王
+      "case": "ས་",                 -- 实际格标记
+      "case_type": "agentive",      -- 施事格
+      "pos": [0, 12],
+      "confidence": 0.95
+    },
+    {
+      "text": "སློབ་མ",
+      "role": "recipient",          -- 接受者：学生
+      "case": "ལ་",
+      "case_type": "dative",        -- 与格
+      "pos": [13, 24],
+      "confidence": 0.90
+    },
+    {
+      "text": "ཆོས་",
+      "role": "patient",            -- 受事者：法
+      "case": null,                 -- 无格标记
+      "case_type": "absolutive",    -- 通格
+      "pos": [25, 30],
+      "confidence": 0.85
+    },
+    {
+      "text": "བསྟན",
+      "role": "predicate",          -- 谓语：教授
+      "case": null,
+      "case_type": null,
+      "pos": [31, 36],
+      "confidence": 0.98
+    }
+  ]
+}

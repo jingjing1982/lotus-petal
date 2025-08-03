@@ -1,0 +1,48 @@
+def prepare_nllb_training_data():
+    """准备NLLB微调数据"""
+
+    # 1. 术语保护训练(可能不需要)
+    term_protection_data = """
+    SELECT
+        pt.source_text,
+        pt.target_text,
+        array_agg(
+            jsonb_build_object(
+                'term', t.tibetan,
+                'correct', t.chinese,
+                'errors', t.nllb_common_errors
+            )
+        ) as terms_to_protect
+    FROM parallel_texts pt
+    JOIN terms t ON pt.source_text LIKE '%' || t.tibetan || '%'
+    WHERE t.nllb_common_errors IS NOT NULL
+    GROUP BY pt.id
+    """
+
+    # 2. 风格一致性训练
+    style_consistency_data = """
+    SELECT
+        source_text,
+        target_text,
+        domain,
+        translation_method,
+        honorific_mappings,
+        translation_patterns
+    FROM parallel_texts
+    WHERE quality_score > 0.9
+    AND (honorific_mappings IS NOT NULL
+         OR translation_patterns IS NOT NULL)
+    """
+
+    # 3. 领域特定训练
+    domain_specific_data = """
+    SELECT
+        source_text,
+        target_text,
+        domain,
+        source_type
+    FROM parallel_texts
+    WHERE domain != 'general'
+    ORDER BY domain, quality_score DESC
+    """
+这样的设计可以有效支持NLLB的微调，提升翻译准确度和风格一致性。

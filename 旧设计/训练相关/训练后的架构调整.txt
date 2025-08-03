@@ -1,0 +1,30 @@
+1. TiBERT调整
+Python
+class EnhancedTiBERTAnalyzer:
+    def __init__(self):
+        # ... 现有初始化 ...
+        self.sentence_boundary_detector = SentenceBoundaryDetector()  # 新增
+        self.enhanced_honorific_detector = EnhancedHonorificDetector()  # 升级
+
+    def detect_honorifics(self, base_analysis):
+        """敬语检测 - 训练后提升到80%+"""
+        # 使用增强模型
+        return self.enhanced_honorific_detector.detect(base_analysis)
+2. MT5调整
+Python
+class EnhancedMT5Analyzer:
+    def __init__(self):
+        # ... 现有初始化 ...
+        self.config = {
+            'grammar_confidence_threshold': 0.7,  # 训练后提升阈值
+            'grammar_weight': 0.6,  # 增加权重
+        }
+3. 决策逻辑调整
+Python
+class GrammarRoleDecisionMaker:
+    def __init__(self):
+        self.mt5_accuracy = 0.8  # 训练后的目标准确率
+
+    def should_use_grammar_roles(self, complexity, confidence):
+        # 训练后可以更激进地使用语法信息
+        return complexity > 0.3 and confidence > 0.5  # 降低阈值

@@ -1,0 +1,167 @@
+1. terms表 - 术语基础信息（扩展版）
+   - id (主键)
+   - tibetan (藏文原文)
+   - tibetan_wylie (威利转写)
+   - pos (词性)
+   - domain (领域，如"佛教哲学"、"修行实践"等)
+   - etymology (词源信息)
+   - literal_meaning (字面意义)
+   - ambiguity_level (多义性水平，1-5)
+   - frequency (使用频率)
+   - semantic_field (语义场分类)
+   - created_at (创建时间)
+   - updated_at (更新时间)
+
+2. translations表 - 翻译变体表
+   - id (主键)
+   - term_id (外键到terms表)
+   - chinese (中文翻译)
+   - context_label (语境标签，如"MADHYAMIKA", "PRAMANA"等)
+   - function_label (功能标签，如"PRACTICE_METHOD", "PHILOSOPHY"等)
+   - priority (优先级，1-10)
+   - is_primary (是否主要翻译)
+   - usage_notes (使用注释)
+   - example_sentence (示例句子)
+   - example_translation (示例翻译)
+   - reference_source (参考来源)
+   - usage_count (使用计数)
+
+3. term_combinations表 - 多词术语表（改进）
+   - id (主键)
+   - combined_tibetan (组合藏文)
+   - combined_chinese (中文翻译)
+   - context_label (语境标签)
+   - function_label (功能标签)
+   - component_terms (组成术语ID，JSON格式)
+   - formation_type (组合类型：词组、固定搭配、习语等)
+   - literal_meaning (字面意义)
+   - semantic_meaning (实际语义)
+   - priority (优先级)
+   - example_usage (使用实例)
+
+4.concept_relations表 - 概念关系表（新增）
+id (主键，自动递增)
+relation_type (关系类型，如"opposite"、"includes"、"stage"等)
+source_concept (源概念，关系的起点术语)
+target_concept (目标概念，关系的终点术语)
+bidirectional (是否双向关系，布尔值)
+confidence (关系可信度，0-1浮点值)
+source_type (关系来源，如"manual"、"extracted"、"learned"等)
+reference_text (支持该关系的参考文本或引用)
+created_at (创建时间)
+
+
+
+表1: terms - 术语基础信息表
+字段名	数据类型	约束条件	默认值	说明
+id	INTEGER	PRIMARY KEY, AUTOINCREMENT	-	术语唯一标识符，自动递增
+tibetan	TEXT	UNIQUE, NOT NULL	-	藏文原文，例如："རིག་པ་"，必须唯一
+tibetan_wylie	TEXT	-	NULL	藏文威利转写，例如："rig pa"
+pos	TEXT	-	NULL	词性，如"名词"、"动词"等
+domain	TEXT	-	NULL	所属领域，如"哲学"、"修行"等
+etymology	TEXT	-	NULL	词源学信息，说明术语的来源和演变
+literal_meaning	TEXT	-	NULL	字面意义，直接翻译的含义
+ambiguity_level	INTEGER	-	1	多义性级别，1-5表示歧义程度（1最低，5最高）
+frequency	INTEGER	-	0	使用频率，表示在文献中出现的频率
+semantic_field	TEXT	-	NULL	语义场，描述术语的语义类别
+created_at	TIMESTAMP	-	CURRENT_TIMESTAMP	记录创建时间
+updated_at	TIMESTAMP	-	CURRENT_TIMESTAMP	记录最后更新时间
+
+
+表2: translations - 术语翻译变体表
+字段名	数据类型	约束条件	默认值	说明
+id	INTEGER	PRIMARY KEY, AUTOINCREMENT	-	翻译记录唯一标识符
+term_id	INTEGER	NOT NULL, FOREIGN KEY	-	关联到terms表的id，表示此翻译对应的术语
+chinese	TEXT	NOT NULL	-	中文翻译文本，如"明觉"、"觉性"
+context_label	TEXT	-	NULL	语境标签，如"中观语境"、"大圆满语境"等
+function_label	TEXT	-	NULL	功能标签，如"哲学概念表达"、"修行方法描述"等
+priority	INTEGER	-	5	优先级，1-10，值越高优先级越高
+is_primary	BOOLEAN	-	FALSE	是否为主要推荐翻译
+usage_notes	TEXT	-	NULL	使用注释，说明何时使用此翻译
+example_sentence	TEXT	-	NULL	包含该术语的示例句子（藏文）
+example_translation	TEXT	-	NULL	示例句子的中文翻译
+reference_source	TEXT	-	NULL	翻译参考来源，如特定经论或学者
+usage_count	INTEGER	-	0	该翻译被系统选用的次数，用于统计
+interpretation_level	INTEGER	-	3	解释程度，1-5（1最直接，5最解释性）
+is_direct_translation	BOOLEAN	-	FALSE	是否为直译（而非意译）
+唯一约束: (term_id, chinese, context_label, function_label) 组合必须唯一
+
+表3: term_combinations - 术语组合表
+字段名	数据类型	约束条件	默认值	说明
+id	INTEGER	PRIMARY KEY, AUTOINCREMENT	-	组合记录唯一标识符
+combined_tibetan	TEXT	UNIQUE, NOT NULL	-	组合术语的藏文形式
+combined_chinese	TEXT	NOT NULL	-	组合术语的中文翻译
+context_label	TEXT	-	NULL	语境标签，表示此组合术语常见的语境
+function_label	TEXT	-	NULL	功能标签，表示此组合术语的功能类型
+component_terms	TEXT	-	NULL	组成该组合的子术语ID列表（JSON格式）
+formation_type	TEXT	-	NULL	组合形成类型，如"复合词"、"短语"等
+literal_meaning	TEXT	-	NULL	组合术语的字面意义
+semantic_meaning	TEXT	-	NULL	组合术语的实际语义
+priority	INTEGER	-	5	优先级，影响在多个匹配时的选择
+example_usage	TEXT	-	NULL	组合术语的使用示例
+数据库索引
+索引名	表名	字段	说明
+idx_tibetan	terms	tibetan	加速按藏文原文查询术语
+idx_translations	translations	term_id, context_label, function_label	加速根据术语ID和语境、功能查询翻译
+idx_combinations	term_combinations	combined_tibetan	加速按组合藏文查询组合术语
+使用说明
+添加新术语：先在terms表中创建基本条目，获取id后再添加翻译
+上下文敏感翻译：系统会根据context_label和function_label选择最适合的翻译
+直译与意译：通过is_direct_translation和interpretation_level字段区分不同翻译方式
+术语组合：处理多个术语组成的复合表达式，提供整体翻译
+
+表4.concept_relations表 - 概念关系信息表
+字段名	数据类型	约束条件	默认值	说明
+id	INTEGER	PRIMARY KEY, AUTOINCREMENT	-	关系记录唯一标识符
+relation_type	TEXT	NOT NULL	-	关系类型，如"opposite"(相反)、"includes"(包含)、"stage"(阶段)、"method_goal"(方法目标)、"related"(相关)
+source_concept	TEXT	NOT NULL	-	源概念，关系的起点术语
+target_concept	TEXT	NOT NULL	-	目标概念，关系的终点术语
+bidirectional	BOOLEAN	-	FALSE	是否双向关系，TRUE表示两个概念互相关联
+confidence	FLOAT	-	1.0	关系可信度评分(0-1)，1表示完全确定
+source_type	TEXT	-	'manual'	关系信息的来源，如"manual"(手动)、"extracted"(提取)、"learned"(学习)、"auto_synced"(自动同步)
+reference_text	TEXT	-	NULL	支持该关系的参考文本或引用
+created_at	TIMESTAMP	-	CURRENT_TIMESTAMP	记录创建时间
+数据库索引
+索引名	表名	字段	说明
+idx_relation_source	concept_relations	relation_type, source_concept	加速按关系类型和源概念查询
+idx_relation_target	concept_relations	relation_type, target_concept	加速按关系类型和目标概念查询
+
+
+
+1. terms表 - 基础术语表
+核心用途：存储所有藏文术语的基本信息
+
+具体使用场景：
+术语识别：在BotokAnalyzer.analyze()方法中，识别文本中的术语时会查询此表
+术语查询基础：作为所有术语翻译操作的基础数据源
+词性标注：pos字段用于语法分析和句法结构识别
+检索过滤：根据domain(领域)和is_common(是否常用)字段筛选术语
+术语导入导出：管理和交换藏文术语数据
+
+2. translations表 - 翻译表
+核心用途：存储每个藏文术语的多种中文翻译及其适用场景
+
+具体使用场景：
+智能翻译：在TermDatabase.get_translation()方法中，根据上下文选择最合适的翻译
+语境适配：利用context_label和function_label在不同文本类型中选择特定翻译
+翻译优先级：通过priority和is_primary字段控制翻译选择倾向
+使用统计：usage_count字段记录翻译使用频率，用于机器学习优化
+翻译备注：notes字段存储翻译的额外信息和使用说明
+
+
+3. term_combinations表 - 多词术语表
+核心用途：处理需要整体翻译的多词术语组合
+
+具体使用场景：
+短语识别：在_check_term_combination()方法中识别多词组合，如"སྟོང་པ་ཉིད་"(空性)
+整体翻译：避免将固定短语拆分为单个词分别翻译造成的错误
+专业术语：处理佛教特定的专业术语组合，保证翻译精确性
+术语关联：通过component_terms字段跟踪组合术语的组成部分
+特殊语境：某些组合术语在特定语境下才有特殊含义
+三个表的协同工作流程
+系统首先使用BotokAnalyzer分析藏文文本，识别潜在术语
+对于每个识别到的术语，先检查term_combinations表是否存在匹配的多词组合
+如果没有匹配的组合，则在terms表中查找该术语
+找到术语后，系统使用FlexibleContextDetector分析当前文本语境
+基于检测到的语境，从translations表中选择最合适的翻译
+最后更新所选翻译的usage_count，以改进未来的选择

@@ -1,0 +1,186 @@
+-- 1. 敬语标注数据表（Phase1: TiBERT敬语识别训练）
+CREATE TABLE honorific_annotations (
+    id BIGSERIAL PRIMARY KEY,
+    sentence_text TEXT NOT NULL,                -- 完整句子
+
+    -- 敬语标注
+    honorific_tokens JSONB NOT NULL,            -- [{text: "མཁྱེན་", position: [12,18], type: "verb", level: "high"}]
+    honorific_context VARCHAR(50),              -- to_buddha/to_lama/to_monk等
+
+    -- 元信息
+    source_id BIGINT REFERENCES parallel_texts(id), -- 来源
+    annotator_id VARCHAR(50),                   -- 标注者
+    annotation_confidence FLOAT DEFAULT 0.9,     -- 标注置信度
+
+    -- 训练分割
+    data_split VARCHAR(10) DEFAULT 'train',     -- train/valid/test
+
+    created_at TIMESTAMP DEFAULT NOW(),
+
+    INDEX idx_split (data_split),
+    INDEX idx_source (source_id)
+);
+
+-- 2. 语法角色标注数据表（Phase1: MT5语法角色识别训练）
+CREATE TABLE grammar_annotations (
+    id BIGSERIAL PRIMARY KEY,
+    tibetan_sentence TEXT NOT NULL,             -- 藏文句子
+    chinese_sentence TEXT,                      -- 对应中文（可选）
+
+    -- 语法角色标注
+    grammar_roles JSONB NOT NULL,               -- {subject: {text: "བླ་མ", span: [0,6]}, verb: {...}}
+    case_markers JSONB,                         -- [{marker: "གིས་", type: "agentive", position: 8}]
+    word_order VARCHAR(20),                     -- SOV/SVO等
+
+    -- 质量控制
+    annotation_method VARCHAR(20),              -- manual/auto/mixed
+    confidence_score FLOAT,                     -- 整体置信度
+
+    -- 训练信息
+    data_split VARCHAR(10) DEFAULT 'train',
+    domain VARCHAR(20) DEFAULT 'general',
+
+    created_at TIMESTAMP DEFAULT NOW(),
+
+    INDEX idx_split_domain (data_split, domain)
+);
+
+-- 3. 术语保护训练数据表（Phase1: NLLB术语保护训练）
+CREATE TABLE term_alignment_data (
+    id BIGSERIAL PRIMARY KEY,
+    source_sentence TEXT NOT NULL,              -- 包含术语的藏文句子
+    target_sentence TEXT NOT NULL,              -- 对应的中文句子
+
+    -- 术语对齐信息
+    term_alignments JSONB NOT NULL,             -- [{source_term: "སངས་རྒྱས་", target_term: "佛", source_span: [0,15], target_span: [0,3]}]
+
+    -- 上下文信息
+    term_context_type VARCHAR(50),              -- definition/usage/example等
+    should_preserve BOOLEAN DEFAULT TRUE,        -- 是否应该保持术语
+
+    -- 训练元信息
+    data_split VARCHAR(10) DEFAULT 'train',
+    quality_score FLOAT DEFAULT 0.9,
+
+    INDEX idx_split (data_split)
+);
+
+-- 4. 句子边界检测训练数据（Phase2）
+CREATE TABLE sentence_boundary_data (
+    id BIGSERIAL PRIMARY KEY,
+    text_chunk TEXT NOT NULL,                   -- 文本块
+
+    -- 边界标注
+    boundaries JSONB NOT NULL,                  -- [{position: 45, type: "terminal", marker: "།", confidence: 0.95}]
+    false_boundaries JSONB,                     -- 标记错误的边界（负样本）
+
+    -- 特殊情况
+    has_nested_quotes BOOLEAN DEFAULT FALSE,    -- 包含嵌套引用
+    has_verses BOOLEAN DEFAULT FALSE,           -- 包含偈颂
+
+    data_split VARCHAR(10) DEFAULT 'train',
+
+    INDEX idx_split (data_split)
+);
+
+-- 5. 复杂度标注数据（Phase2）
+CREATE TABLE complexity_annotations (
+    id BIGSERIAL PRIMARY KEY,
+    sentence_text TEXT NOT NULL,                -- 句子文本
+
+    -- 复杂度标注
+    complexity_score FLOAT NOT NULL,            -- 0-1的复杂度分数
+    complexity_factors JSONB,                   -- {length: 0.3, vocabulary: 0.5, structure: 0.8}
+    complexity_level VARCHAR(20),               -- simple/medium/complex
+
+    -- 影响因素
+    has_embedded_clauses BOOLEAN,               -- 嵌套从句
+    has_rare_terms BOOLEAN,                     -- 罕见术语
+    syntactic_depth INTEGER,                    -- 句法深度
+
+    -- 人工标注信息
+    annotator_count INTEGER DEFAULT 1,          -- 标注人数
+    inter_annotator_agreement FLOAT,            -- 标注者间一致性
+
+    data_split VARCHAR(10) DEFAULT 'train',
+
+    INDEX idx_split_level (data_split, complexity_level)
+);
+
+-- 6. 风格保持训练数据（Phase2）
+CREATE TABLE style_preservation_data (
+    id BIGSERIAL PRIMARY KEY,
+    source_text TEXT NOT NULL,                  -- 原文
+    target_text TEXT NOT NULL,                  -- 译文
+
+    -- 风格标注
+    style_features JSONB NOT NULL,              -- {formality: "high", rhythm: "verse", tone: "devotional"}
+    preserved_elements JSONB,                   -- 保留的风格元素
+    lost_elements JSONB,                        -- 丢失的风格元素
+
+    -- 领域和质量
+    domain VARCHAR(20) NOT NULL,
+    style_preservation_score FLOAT,             -- 风格保持度评分
+
+    data_split VARCHAR(10) DEFAULT 'train',
+
+    INDEX idx_domain_split (domain, data_split)
+);
+
+-- 7. 模型协同训练数据（Phase3）
+CREATE TABLE model_collaboration_data (
+    id BIGSERIAL PRIMARY KEY,
+    source_text TEXT NOT NULL,
+
+    -- 各模型输出
+    tibert_output JSONB,                        -- TiBERT分析结果
+    mt5_output JSONB,                           -- MT5分析结果
+    nllb_raw_output TEXT,                       -- NLLB原始翻译
+
+    -- 最优翻译
+    optimal_translation TEXT NOT NULL,          -- 人工确认的最佳翻译
+    optimization_notes JSONB,                   -- 优化说明
+
+    -- 协同信息
+    collaboration_score FLOAT,                  -- 协同效果评分
+
+    data_split VARCHAR(10) DEFAULT 'train'
+);
+
+
+-- 为parallel_texts表添加训练相关字段
+ALTER TABLE parallel_texts
+ADD COLUMN is_training_data BOOLEAN DEFAULT FALSE,
+ADD COLUMN data_split VARCHAR(10),             -- train/valid/test
+ADD COLUMN annotation_status VARCHAR(20);       -- pending/in_progress/completed
+
+-- 为terms表添加训练统计
+ALTER TABLE terms
+ADD COLUMN training_frequency INTEGER DEFAULT 0,  -- 训练集中出现次数
+ADD COLUMN model_confidence FLOAT;                -- 模型识别置信度
+
+-- 创建训练进度跟踪表
+CREATE TABLE training_progress (
+    id SERIAL PRIMARY KEY,
+    phase VARCHAR(20) NOT NULL,                -- Phase1/Phase2/Phase3
+    model VARCHAR(20) NOT NULL,                -- tibert/mt5/nllb
+    task VARCHAR(50) NOT NULL,                 -- 具体任务
+
+    -- 数据统计
+    total_samples INTEGER,
+    completed_samples INTEGER,
+
+    -- 性能指标
+    current_accuracy FLOAT,
+    target_accuracy FLOAT,
+    best_accuracy FLOAT,
+
+    -- 时间信息
+    started_at TIMESTAMP,
+    last_updated TIMESTAMP DEFAULT NOW(),
+    estimated_completion TIMESTAMP,
+
+    status VARCHAR(20) DEFAULT 'pending',       -- pending/in_progress/completed
+
+    UNIQUE(phase, model, task)
+);

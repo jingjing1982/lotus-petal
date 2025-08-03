@@ -1,0 +1,42 @@
+同步所有表并维护一致性：
+python scripts/sync_database.py --db your_database.db --full-sync
+
+设置定期任务，确保数据库一致性（没试过）
+python scripts/sync_database.py --db your_database.db --check-consistency
+
+从文件翻译文本：
+python main.py translate -i test_data/simple.txt -o test_data/simple_output.txt
+
+测试文件翻译:
+python main.py translate-file test_data/complex.txt --show-progress --save-metadata
+
+测试批量翻译:
+python main.py translate-dir test_data output_data
+
+高级测试：
+1. 调整句子分割阈值：
+python main.py translate-file test_data/complex.txt --split-threshold 50
+
+2. 使用替代翻译：
+python main.py translate "སངས་རྒྱས་ཀྱིས་ཆོས་གསུངས།" --alternatives
+
+3. 调整批处理大小：
+python main.py translate-file test_data/complex.txt --batch-size 4
+
+验证翻译质量
+# 假设我们已经有了参考翻译
+echo "佛陀说法。" > test_data/reference.txt
+
+# 翻译文件
+python main.py translate-file test_data/simple.txt -o test_data/test_output.txt
+
+# 验证翻译
+python main.py validate test_data/simple.txt test_data/test_output.txt --detailed
+
+
+如果遇到问题，可以尝试：
+
+检查日志：查看 translation.log 获取详细错误信息
+开启详细输出：使用 -v 或 --verbose 选项
+检查文件编码：确保输入文件是 UTF-8 编码
+减小批处理大小：如果内存不足，使用 --batch-size 1 减少内存使用

@@ -1,0 +1,33 @@
+-- 导入示例，包含预分析信息
+INSERT INTO parallel_texts (
+    source_text,
+    target_text,
+    domain,
+    text_length,
+    sentence_count,
+    has_boundary_markers,
+    complexity_level,
+    contains_honorifics,
+    grammar_pattern
+) VALUES (
+    'བླ་མ་དམ་པ་རྣམས་ཀྱིས་ཆོས་གསུངས་སོ།',
+    '圣上师们说法。',
+    'dharma',
+    42,  -- 自动计算
+    1,   -- 句子数
+    TRUE, -- 有།标记
+    'simple',
+    TRUE, -- 包含དམ་པ敬语
+    'SOV' -- 主宾谓结构
+);
+
+-- 批量导入句子边界规则
+INSERT INTO sentence_boundaries (boundary_marker, marker_type, confidence, usage_notes) VALUES
+('།', 'terminal', 0.95, '最常见的句子结束标记'),
+('ང་།', 'terminal', 0.90, '第一人称动词后的句子结束'),
+('གོ།', 'terminal', 0.90, '陈述句结束标记'),
+('དོ།', 'terminal', 0.90, '肯定句结束标记'),
+('སོ།', 'terminal', 0.90, '过去时结束标记'),
+('རོ།', 'terminal', 0.90, '现在时结束标记'),
+('ཏོ།', 'terminal', 0.90, '将来时结束标记'),
+('།།', 'verse', 0.95, '偈颂结束标记');

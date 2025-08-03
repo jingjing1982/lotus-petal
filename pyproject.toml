@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "tibetan-translator"
+version = "1.0.0"
+description = "A Tibetan to Chinese translation tool focused on Buddhist texts"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+packages = [{include = "tibetan_translator"}]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+torch = "^2.0.0"
+transformers = "^4.30.0"
+botok = {git = "https://github.com/OpenPecha/Botok.git"}
+numpy = "^1.24.0"
+pandas = "^2.0.0"
+tqdm = "^4.65.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.3.0"
+black = "^23.0.0"
+flake8 = "^6.0.0"
+mypy = "^1.3.0"
+
+[tool.poetry.scripts]
+tibetan-translator = "tibetan_translator.main:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

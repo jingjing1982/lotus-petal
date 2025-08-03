@@ -1,0 +1,299 @@
+-- ===== 数据库设计说明 =====
+-- 用途：藏文到中文的翻译系统，支持多种AI模型训练
+--
+-- 主要功能：
+-- 1. 术语管理（terms表）
+-- 2. 平行语料存储（parallel_texts表）
+-- 3. 句子边界规则（sentence_boundaries表）
+-- 4. 翻译缓存（translation_cache表）
+--
+-- 训练支持：
+-- - MT5: 使用 text_analysis 字段
+-- - TiBERT: 使用 honorific_spans 字段
+-- - 句子分割: 使用 sentence_boundaries, boundary_markers, boundary_features
+-- - NLLB: 使用 translation_method 字段
+--
+-- 注意事项：
+-- 1. 所有位置值（pos, start, end）都是字符位置，不是字节位置
+-- 2. JSONB 字段可以为 NULL，表示未标注
+-- 3. 使用 UTF-8 编码存储所有文本
+-- ===== 结束 =====
+
+
+
+-- 1. 术语表（增强版）
+CREATE TABLE terms (
+    id SERIAL PRIMARY KEY,
+    tibetan VARCHAR(200) NOT NULL,          -- 藏文术语
+    chinese VARCHAR(200) NOT NULL,          -- 中文原版翻译
+    tibetan_synonyms TEXT[],                -- 藏文同义词：['བདེ་བར་གཤེགས་པ་', 'མགོན་པོ་']
+    tibetan_variants TEXT[],                -- 藏文变体：['སངསརྒྱས་', 'སངས་རགྱས་']
+    chinese_synonyms TEXT[],                -- 中文同义词数组：['佛陀', '如来', '世尊']
+    domain VARCHAR(20) DEFAULT 'dharma',    -- 领域
+    -- domain 可选值：
+    -- sutra - 佛经
+    -- dharma - 佛法（默认）
+    -- verse - 颂词
+    -- ancient - 古语
+    -- mantra - 咒语
+    -- general - 通用
+    pos VARCHAR(20),                        -- 词性
+    -- pos 可选值：n（名词）, v（动词）, adj（形容词）, adv（副词）,
+    -- pron（代词）, num（数词）, conj（连词）, part（助词）,
+    -- punct（标点）, other（其他）
+
+    -- 语言学信息（有助于TiBERT分析）
+    is_honorific BOOLEAN DEFAULT FALSE,     -- 是否敬语
+
+    frequency INTEGER DEFAULT 0,            -- 使用频率
+    created_at TIMESTAMP DEFAULT NOW(),
+
+    UNIQUE(tibetan, chinese, domain)
+);
+-- 术语表索引
+CREATE INDEX idx_terms_tibetan ON terms(tibetan);           -- 加速藏文术语查询
+CREATE INDEX idx_terms_domain ON terms(domain);             -- 加速按领域查询
+CREATE INDEX idx_terms_honorific ON terms(is_honorific)     -- 加速敬语词查询
+    WHERE is_honorific = TRUE;                               -- 部分索引，只索引敬语
+
+-- 2. 平行语料表（增强版）
+CREATE TABLE parallel_texts (
+    id BIGSERIAL PRIMARY KEY,
+    source_text TEXT NOT NULL,              -- 藏文原文
+    target_text TEXT NOT NULL,              -- 中文译文
+    domain VARCHAR(20) DEFAULT 'dharma',    -- 领域
+    -- domain 可选值：
+    -- sutra - 佛经
+    -- dharma - 佛法（默认）
+    -- verse - 颂词
+    -- ancient - 古语
+    -- mantra - 咒语
+    -- general - 通用
+    translation_method VARCHAR(20),         -- literal/free（直译/意译标记）用于训练NLLB模型适应不同的翻译策略，佛经通常需要直译，教义解释可以意译
+    -- 可选值：literal（直译）, free（意译）, mixed（混合）, null（未标注）
+
+    -- 文本分析信息（预计算，加速运行时）
+    text_length INTEGER,                    -- 源文本字符长度（不是字节），用于快速筛选相似长度文本
+
+    -- 语义信息（用于训练）
+    text_analysis JSONB,                   -- 语义角色信息（见下方示例）
+    annotation_confidence FLOAT,           -- 标注置信度（0-1），低于0.5的可能需要人工复核
+    -- text_analysis JSONB 字段规范
+    -- 数组结构，每个元素代表一个语义成分
+    -- [
+    --   {
+    --     "text": "རྒྱལ་པོ་",                  -- 必填：文本内容
+    --     "role": "agent",                -- 必填：语义角色（见下方角色列表）
+    --     "case": "གིས་",                   -- 可选：格标记（实际出现的格助词）
+    --     "case_type": "agentive",        -- 可选：格标记类型（见下方类型列表）
+    --     "pos": [0, 12],                 -- 必填：字符位置 [起始, 结束]
+    --     "confidence": 0.85              -- 可选：标注置信度（0-1）
+    --   }
+    -- ]
+
+    -- ===== 语义角色（role）完整列表 =====
+    -- agent        - 施事者（执行动作的人/物）
+    -- patient      - 受事者（接受动作影响的人/物）
+    -- experiencer  - 经验者（感知/经历某事的人）
+    -- recipient    - 接受者（接收某物的人）
+    -- beneficiary  - 受益者（从动作中获益的人）
+    -- instrument   - 工具（用来执行动作的工具）
+    -- location     - 地点（动作发生的地点）
+    -- source       - 来源（动作的起点）
+    -- goal         - 目标（动作的终点）
+    -- theme        - 主题（被移动或描述的事物）
+    -- predicate    - 谓语（动词本身）
+    -- modifier     - 修饰语（形容词、副词等）
+    -- time         - 时间（动作发生的时间）
+    -- manner       - 方式（动作执行的方式）
+    -- cause        - 原因（动作的原因）
+    -- purpose      - 目的（动作的目的）
+
+    -- ===== 格标记类型（case_type）完整列表 =====
+    -- agentive     - 施事格 (གིས་/ཀྱིས་/གྱིས་/ས་)
+    -- genitive     - 属格 (གི་/ཀྱི་/གྱི་/འི་/ཡི་)
+    -- dative       - 与格 (ལ་/ར་/ཏུ་/དུ་/སུ་/རུ་)
+    -- ablative     - 离格 (ནས་/ལས་)
+    -- instrumental - 工具格 (གིས་/ཀྱིས་/གྱིས་)
+    -- locative     - 位格 (ན་/ལ་)
+    -- terminative  - 终格 (བར་/ཡན་/ཚུན་)
+    -- comitative   - 共同格 (དང་/དང་བཅས་)
+    -- comparative  - 比较格 (བས་/ལས་)
+    -- vocative     - 呼格 (通常无标记或用ཨ་)
+    -- ergative     - 作格 (གིས་系列，及物动词主语)
+    -- absolutive   - 通格 (无标记，不及物动词主语或及物动词宾语)
+
+    -- 敬语训练（TiBERT）
+    contains_honorifics BOOLEAN DEFAULT FALSE, -- 快速标记：是否包含敬语（用于筛选训练数据）
+    honorific_spans JSONB,                     -- 敬语详细信息：位置、级别、上下文等（见下方示例）
+    -- honorific_spans 包含所有需要的信息：
+    -- {
+    --   "spans": [{start: 10, end: 20, word: "གསུང་", type: "verb", level: "high"}], -- 敬语跨度数组，包含文本中所有敬语词的位置信息
+    --   "context_type": "dialogue",
+    --   "speaker_status": "buddha",
+    --   "annotation_source": "manual"
+    -- }
+    --[
+    --     {
+    --       "start": 10,                          -- 敬语词在文本中的起始位置（字符位置，从0开始）
+    --       "end": 20,                            -- 敬语词在文本中的结束位置（不包含）
+    --       "word": "གསུང་",                         -- 敬语词本身
+    --       "type": "verb",                       -- 词性类型：verb（动词）/noun（名词）/pronoun（代词）/adjective（形容词）
+    --       "level": "high"                       -- 敬语级别：high（最高敬语）/medium（中等敬语）/low（一般敬语）
+    --     }
+    --   "context_type": "dialogue",               -- 上下文类型：dialogue(对话)/narrative(叙述)/prayer(祈愿)/instruction(教导)
+    --   "speaker_status": "buddha",               -- 说话者身份：buddha/lama/teacher/student/deity/ordinary
+    --   "listener_status": "disciple",            -- 听话者身份（可选）：disciple/devotee/general/deity
+    --   "annotation_source": "manual",            -- 标注来源：manual(人工)/auto(自动)/mixed(混合)/verified(已验证)
+    --   "annotation_confidence": 0.95,            -- 标注置信度（可选）：0-1之间的浮点数
+    --   "annotator_id": "jingjing1982",           -- 标注者ID（可选）：用于追踪标注质量
+    --   "annotation_date": "2025-06-12"           -- 标注日期（可选）：ISO格式日期
+    -- ]
+
+    quality_score FLOAT DEFAULT 0.8,           -- 翻译质量评分（主要用途：标记翻译对的质量，用于筛选训练数据）
+    -- quality_score 评分标准：
+    -- 0.95-1.0: 专业译者+审校
+    -- 0.85-0.94: 专业译者
+    -- 0.70-0.84: 一般人工翻译
+    -- 0.50-0.69: 机器翻译+人工校对
+    -- 0.0-0.49: 纯机器翻译
+    created_at TIMESTAMP DEFAULT NOW(),        -- 数据创建时间，用于增量训练和版本管理
+
+    --支持句子边界训练
+    sentence_boundaries INTEGER[],      -- 句子边界字符位置数组，如：[45, 89, 134]
+    boundary_markers TEXT[],            -- 实际使用的边界标记，如：['།', 'གོ།', 'དོ།']
+    boundary_features JSONB,            -- 句子边界的序列标注特征
+    -- boundary_features JSONB 字段的完整示例：
+    -- {
+    --   "tokens": [                           -- token数组，包含每个字符的详细信息
+    --     {
+    --       "pos": 18,                        -- 字符在原文中的位置（从0开始）
+    --       "char": "ས",                      -- 当前字符
+    --       "is_sentence_start": false,       -- 是否是句子开始
+    --       "is_sentence_end": false,         -- 是否是句子结束
+    --       "prev_token": "ང",                -- 前一个字符（用于上下文判断）
+    --       "next_token": "ོ",                -- 后一个字符（用于上下文判断）
+    --       "features": {                     -- 字符特征集合
+    --         "is_tibetan": true,             -- 是否是藏文字符
+    --         "is_punctuation": false,        -- 是否是标点符号
+    --         "is_particle": true,            -- 是否是助词（如 གི་/ནི་/ཏེ་等）
+    --         "follows_verb": true            -- 是否紧跟在动词后（用于判断动词语尾）
+    --       }
+    --     },
+    --     {
+    --       "pos": 20,                        -- 句号的位置
+    --       "char": "།",                      -- 藏文句号
+    --       "is_sentence_start": false,       -- 不是句子开始
+    --       "is_sentence_end": true,         -- 标记句子结束位置
+    --       "prev_token": "ོ",                -- 前面是元音ོ
+    --       "next_token": " ",                -- 后面是空格
+    --       "features": {
+    --         "is_tibetan": false,            -- 句号不算藏文字符
+    --         "is_punctuation": true,         -- 是标点符号
+    --         "boundary_type": "terminal"     -- 边界类型：terminal(终止)/clause(从句)/quote(引用)
+    --       }
+    --     }
+    --   ]
+    -- }
+
+);
+-- 平行语料表索引
+CREATE INDEX idx_parallel_domain ON parallel_texts(domain);              -- 加速按领域查询
+CREATE INDEX idx_parallel_quality ON parallel_texts(quality_score DESC); -- 加速按质量排序
+CREATE INDEX idx_parallel_length ON parallel_texts(text_length);         -- 加速按长度查询
+CREATE INDEX idx_parallel_honorific ON parallel_texts(contains_honorifics) -- 加速敬语文本查询
+    WHERE contains_honorifics = TRUE;                                      -- 部分索引
+
+-- 3. 句子边界规则表（新增）
+CREATE TABLE sentence_boundaries (
+    id SERIAL PRIMARY KEY,
+    boundary_marker VARCHAR(50) NOT NULL,   -- 边界标记：'།', 'ང་།', 'གོ།', 'དོ།' 等
+    marker_type VARCHAR(20),
+    -- 可选值：
+    -- terminal - 句子结束
+    -- clause - 从句分隔
+    -- verse - 诗偈标记
+    -- quote - 引用标记
+    -- section - 章节分隔
+    confidence FLOAT DEFAULT 0.9,           -- 置信度
+
+    -- 上下文规则
+    preceding_pattern VARCHAR(100),         -- 前置模式（正则）
+    following_pattern VARCHAR(100),         -- 后置模式（正则）
+
+    usage_notes TEXT,                       -- 使用说明
+
+    UNIQUE(boundary_marker)
+);
+-- 句子边界表索引
+CREATE INDEX idx_boundary_marker ON sentence_boundaries(boundary_marker);  -- 加速标记查询
+CREATE INDEX idx_boundary_type ON sentence_boundaries(marker_type);        -- 加速按类型查询
+
+
+-- 4. 翻译缓存表（运行时必需）
+CREATE TABLE translation_cache (
+    id BIGSERIAL PRIMARY KEY,
+    source_hash VARCHAR(64) UNIQUE NOT NULL, -- 源文本哈希
+    -- source_hash: 使用 SHA256 对 source_text 生成，用于快速查重
+    -- 生成方法：SHA256(TRIM(source_text))
+    source_text TEXT NOT NULL,               -- 藏文
+    target_text TEXT NOT NULL,               -- 译文
+    domain VARCHAR(20),                      -- 领域
+    -- domain 可选值：
+    -- sutra - 佛经
+    -- dharma - 佛法（默认）
+    -- verse - 颂词
+    -- ancient - 古语
+    -- mantra - 咒语
+    -- general - 通用
+
+    use_count INTEGER DEFAULT 1,             -- 使用次数
+    last_used TIMESTAMP DEFAULT NOW()       -- 最后使用时间
+
+);
+-- 翻译缓存表索引（已在表定义中使用正确的语法）
+CREATE INDEX idx_cache_hash ON translation_cache(source_hash);           -- 加速哈希查询
+CREATE INDEX idx_cache_last_used ON translation_cache(last_used DESC);   -- 加速LRU清理
+
+
+
+
+领域说明：
+
+('sutra', '佛经','佛陀亲说的经典，如《般若经》、《华严经》等'),
+
+('dharma', '佛法','论著、注释、教法解释等，如《入菩萨行论》、《中观论》等'),
+
+('verse', '颂词','赞颂、祈愿文、道歌等韵文体裁'),
+
+('ancient', '古语', '古老形式的语言'),
+
+('mantra', '咒语','佛教中的神圣音节、念诵文字，如《大悲咒》、《心经咒》等'),
+
+('general', '普通','通用藏文翻译')
+
+
+功能完整性检查
+✅ 翻译功能
+术语表 ✓
+翻译记忆（parallel_texts） ✓
+领域分类 ✓
+质量评分 ✓
+✅ 训练功能
+MT5语义角色训练
+
+text_analysis ✓
+grammar_confidence ✓
+TiBERT敬语训练
+
+contains_honorifics ✓
+honorific_spans ✓
+句子边界训练
+
+sentence_boundaries ✓
+boundary_markers ✓
+boundary_features ✓
+sentence_boundaries规则表 ✓
+NLLB风格训练
+
+translation_method (literal/free) ✓

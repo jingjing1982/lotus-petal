@@ -1,0 +1,857 @@
+
+#优化后的功能模块
+1. 文档预处理模块
+1.1 文档结构分析器
+class DocumentStructureAnalyzer:
+    """文档结构分析，100%准确率的部分"""
+
+    def analyze_document_type(self, text):
+        """文档类型判断 - ✅保留"""
+        # 使用分类器，100%准确率
+        return self.classifier.predict(text)
+
+    def detect_chapters(self, text):
+        """章节识别 - ✅保留"""
+        # 识别ལེའུ་དང་པོ།等标记
+        return self.rule_engine.find_chapters(text)
+
+    def detect_paragraphs(self, text):
+        """段落检测 - ✅保留"""
+        # 基于空行和缩进
+        return self.rule_engine.find_paragraphs(text)
+
+    def identify_special_formats(self, text):
+        """特殊格式识别 - ✅保留"""
+        # 偈颂、引文、注释等
+        return self.pattern_matcher.find_formats(text)
+
+1.2 智能分句器
+class IntelligentSegmenter:
+    """智能分句，85-90%准确率"""
+
+    def segment_sentences(self, text):
+        """句子边界检测 - ✅保留"""
+        sentences = self.rule_based_split(text)
+
+        # TiBERT辅助验证完整性
+        validated = self.validate_completeness(sentences)
+
+        # 优化过长过短句子
+        optimized = self.optimize_sentence_length(validated)
+
+        return optimized
+
+1.3 基础元数据提取
+class BasicMetadataExtractor:
+    """简化的元数据提取"""
+
+    def extract_metadata(self, document):
+        """提取基础元数据 - ⚠️简化"""
+        return {
+            'doc_type': self.identify_doc_type(document),
+            'text_category': self.basic_categorization(document),
+            # 敬语检测移到句子级
+        }
+
+2. 三模型协同分析模块
+
+2.1 增强的TiBERT分析器
+class EnhancedTiBERTAnalyzer:
+    """TiBERT分析器 - 修正版，移除语法角色识别，专注词性和术语"""
+
+    def __init__(self):
+        self.tibert = TiBERTModel()
+        self.case_detector = CaseMarkerDetector()  # 只检测格标记，不推断角色
+        self.term_extractor = TermExtractor()
+        self.tfidf_scorer = TFIDFScorer()  # 添加TF-IDF评分器
+
+    def analyze_sentence(self, sentence):
+        """句子级综合分析 - ⚠️修正"""
+        # 基础TiBERT分析
+        base_analysis = self.tibert.analyze(sentence)
+
+        results = {
+            'terms': self.extract_terms(base_analysis),  # 95%准确率
+            'case_markers': self.detect_case_markers(base_analysis),  # 只检测格标记
+            'honorifics': self.detect_honorifics(base_analysis),  # 28%识别率
+            'pos_tags': base_analysis['pos_tags']  # 词性标注
+            'embedding': base_analysis.get('embedding')
+        }
+
+        return results
+
+    def extract_terms(self, base_analysis):
+        """术语提取 - ✅保留"""
+        # 使用TiBERT识别术语
+        terms = self.term_extractor.extract(base_analysis)
+        return terms
+
+    def calculate_term_density(self, terms, text_length):
+        """术语密度计算 - ✅保留"""
+        # 计算术语占文本的比例
+        if text_length == 0:
+            return 0.0
+        return len(terms) / text_length
+
+    def score_term_importance(self, terms, document_terms):
+        """术语重要性评分 - ✅保留"""
+        # TF-IDF计算，评估术语在文档中的重要性
+        # TF: 术语在当前句子中的频率
+        # IDF: 术语在整个文档中的逆文档频率
+        return self.tfidf_scorer.score(terms, document_terms)
+
+    def detect_case_markers(self, tibert_output):
+        """格标记检测 - ⚠️修正：只检测，不推断角色"""
+        case_markers = []
+
+        # 格标记定义
+        case_types = {
+            'agentive': ['གིས་', 'ཀྱིས་', 'གྱིས་', 'ཡིས་', 'ས་'],
+            'dative': ['ལ་', 'ལུ་', 'ར་', 'རུ་', 'སུ་', 'ཏུ་', 'དུ་'],
+            'genitive': ['གི་', 'ཀྱི་', 'གྱི་', 'ཡི་', 'འི་'],
+            'ablative': ['ལས་', 'ནས་'],
+            'locative': ['ན་', 'ནི་']
+        }
+
+        for i, token in enumerate(tibert_output['tokens']):
+            if token['pos'] == 'PART':  # 助词
+                for case_type, markers in case_types.items():
+                    if token['text'] in markers:
+                        case_markers.append({
+                            'marker': token['text'],
+                            'type': case_type,
+                            'position': i,
+                            'preceding_word': tibert_output['tokens'][i-1] if i > 0 else None
+                        })
+                        break
+
+        return case_markers
+
+    def detect_honorifics(self, base_analysis):
+        """敬语检测 - ⚠️只记录到元数据"""
+        honorifics = []
+        # 敬语词典匹配
+        for token in base_analysis['tokens']:
+            if self.is_honorific(token['text']):
+                honorifics.append({
+                    'text': token['text'],
+                    'position': token['position'],
+                    'type': self.get_honorific_type(token['text'])
+                })
+        return honorifics
+
+    def analyze_document_level(self, sentences):
+        """文档级分析 - ✅新增"""
+        # 收集所有术语用于TF-IDF计算
+        all_terms = []
+        for sentence in sentences:
+            sentence_analysis = self.analyze_sentence(sentence)
+            all_terms.extend(sentence_analysis['terms'])
+
+        # 计算每个术语的文档级重要性
+        document_term_scores = {}
+        for term in set(all_terms):
+            score = self.tfidf_scorer.calculate_idf(term, all_terms)
+            document_term_scores[term] = score
+
+        return document_term_scores
+
+
+2.2 MT5分析器 - 包含语法角色识别（当前30%，未来可提升）
+class EnhancedMT5Analyzer:
+    """MT5分析器 - 增强版，保留原有功能并添加语法角色识别"""
+
+    def __init__(self):
+        self.mt5 = MT5Model()
+        self.dimension_adapter = DimensionAdapter()  # 保留原有
+        self.grammar_role_identifier = GrammarRoleIdentifier()  # 新增
+
+        # 配置参数，便于未来调整
+        self.config = {
+            'use_grammar_roles': True,  # 可开关
+            'grammar_confidence_threshold': 0.3,  # 当前30%，训练后可提升
+            'grammar_weight': 0.3,  # 在决策中的权重，未来可增加
+            'complexity_correction': True  # 是否进行复杂度校正
+        }
+
+    def analyze_sentence(self, sentence, tibert_data=None):
+        """句子分析，支持维度适配和语法角色识别"""
+        # 1. 维度适配（保留原功能）
+        adapted_embedding = None
+        if tibert_data and 'embedding' in tibert_data:
+            tibert_embedding = tibert_data['embedding']
+            adapted_embedding = self.dimension_adapter.adapt(tibert_embedding)
+
+        # 2. 基础分析（使用适配后的embedding）
+        results = {
+            'complexity': self.compute_corrected_complexity(sentence, adapted_embedding),
+            'semantic_density': self.analyze_density(sentence, adapted_embedding),
+            'embedding': self.mt5.encode(sentence)
+        }
+
+        # 3. 语法角色识别（新增功能）
+        if self.config['use_grammar_roles'] and self.should_analyze_grammar(results['complexity']['corrected']):
+            grammar_analysis = self.identify_grammar_roles(sentence, tibert_data)
+            results['grammar_roles'] = grammar_analysis
+            results['grammar_confidence'] = self.estimate_grammar_confidence(grammar_analysis)
+
+        return results
+
+    def compute_corrected_complexity(self, sentence, adapted_embedding=None):
+        """复杂度评分with校正 - 保留原有逻辑"""
+        if adapted_embedding is not None:
+        # 结合TiBERT语义信息计算复杂度
+            raw_score = self.mt5.compute_complexity_with_embedding(sentence, adapted_embedding)
+        else:
+            raw_score = self.mt5.compute_complexity(sentence)
+
+        if self.config['complexity_correction']:
+            # 保留原有的校正逻辑
+            length = len(sentence)
+            if length < 50 and raw_score > 0.6:
+                # 简单句不应该有高复杂度
+                corrected = raw_score * 0.5
+            elif length > 150:
+                # 长句适当提升
+                corrected = min(raw_score * 1.1, 1.0)
+            else:
+                corrected = raw_score * 0.85
+        else:
+            corrected = raw_score
+
+        return {
+            'raw': raw_score,
+            'corrected': corrected,
+            'confidence': self.calculate_complexity_confidence(sentence, corrected)
+        }
+
+    def analyze_density(self, sentence):
+        """语义密度分析 - 保留原方法"""
+        return self.mt5.calculate_semantic_density(sentence)
+
+    def calculate_complexity_confidence(self, sentence, corrected_score):
+        """计算复杂度评估的置信度 - 改进原方法"""
+        # 基于句子特征计算置信度
+        length = len(sentence)
+
+        # 长度在合理范围内置信度更高
+        if 30 <= length <= 100:
+            length_confidence = 0.9
+        elif 20 <= length <= 150:
+            length_confidence = 0.7
+        else:
+            length_confidence = 0.5
+
+        # 复杂度分数的合理性
+        score_confidence = 1.0 - abs(corrected_score - 0.5) * 0.5
+
+        return (length_confidence + score_confidence) / 2
+
+    def should_analyze_grammar(self, complexity_score):
+        """决定是否进行语法分析 - 新增"""
+        # 基于复杂度决定是否需要语法分析
+        # 简单句（复杂度<0.4）通常不需要
+        return complexity_score >= 0.4
+
+    def identify_grammar_roles(self, sentence, tibert_data=None):
+        """语法角色识别 - 基于MT5，结合TiBERT格标记信息"""
+        # 使用MT5的语义理解能力进行基础识别
+        mt5_analysis = self.grammar_role_identifier.analyze(sentence)
+
+        # 如果有TiBERT的格标记信息，用于验证和增强
+        if tibert_data and 'case_markers' in tibert_data:
+            enhanced_roles = self.enhance_with_case_markers(
+                mt5_analysis,
+                tibert_data['case_markers'],
+                tibert_data.get('pos_tags', [])
+            )
+            return enhanced_roles
+
+        return mt5_analysis
+
+    def enhance_with_case_markers(self, mt5_roles, case_markers, pos_tags=None):
+        """结合格标记信息增强语法角色识别"""
+        enhanced = mt5_roles.copy() if mt5_roles else {}
+
+        # 使用格标记验证和补充MT5的判断
+        for marker in case_markers:
+            marker_type = marker['type']
+            preceding_word = marker.get('preceding_word')
+
+            if not preceding_word:
+                continue
+
+            # 施事格标记
+            if marker_type == 'agentive':
+                if 'subject' in enhanced:
+                    # MT5已识别，验证是否一致
+                    if enhanced['subject'].get('text') == preceding_word.get('text'):
+                        # 一致，提升置信度
+                        enhanced['subject']['confidence'] = min(
+                            enhanced['subject'].get('confidence', 0.3) * 1.5,
+                            0.9
+                        )
+                        enhanced['subject']['verified_by'] = 'case_marker'
+                else:
+                    # MT5未识别，基于格标记添加
+                    enhanced['subject'] = {
+                        'text': preceding_word.get('text'),
+                        'position': preceding_word.get('position'),
+                        'confidence': 0.6,  # 格标记支持的中等置信度
+                        'source': 'case_marker',
+                        'role': 'agent'
+                    }
+
+            # 与格/向格标记（通常标记间接宾语）
+            elif marker_type == 'dative':
+                if 'indirect_object' not in enhanced:
+                    enhanced['indirect_object'] = {
+                        'text': preceding_word.get('text'),
+                        'position': preceding_word.get('position'),
+                        'confidence': 0.6,
+                        'source': 'case_marker',
+                        'role': 'recipient'
+                    }
+
+            # 属格标记
+            elif marker_type == 'genitive':
+                if 'possessor' not in enhanced:
+                    enhanced['possessor'] = {
+                        'text': preceding_word.get('text'),
+                        'position': preceding_word.get('position'),
+                        'confidence': 0.7,
+                        'source': 'case_marker',
+                        'role': 'possessor'
+                    }
+
+        # 使用词性信息增强动词识别
+        if pos_tags and 'verb' not in enhanced:
+            for tag in pos_tags:
+                if tag.get('pos') == 'VERB':
+                    enhanced['verb'] = {
+                        'text': tag.get('text'),
+                        'position': tag.get('position'),
+                        'confidence': 0.8,  # 词性标注相对可靠
+                        'source': 'pos_tag'
+                    }
+                    break
+
+        return enhanced
+
+    def estimate_grammar_confidence(self, grammar_roles):
+        """评估语法角色识别的整体置信度"""
+        if not grammar_roles:
+            return 0.0
+
+        # 收集各种置信度因素
+        confidence_factors = []
+        weights = []
+
+        # 1. 个体角色置信度
+        role_confidences = []
+        for role, info in grammar_roles.items():
+            if isinstance(info, dict) and 'confidence' in info:
+                role_confidences.append(info['confidence'])
+
+        if role_confidences:
+            avg_role_confidence = sum(role_confidences) / len(role_confidences)
+            confidence_factors.append(avg_role_confidence)
+            weights.append(0.4)  # 40%权重
+
+        # 2. 验证支持度（是否有格标记验证）
+        verified_count = sum(1 for role in grammar_roles.values()
+                           if isinstance(role, dict) and
+                           role.get('verified_by') == 'case_marker')
+
+        if verified_count > 0:
+            verification_rate = verified_count / len(grammar_roles)
+            confidence_factors.append(0.3 + verification_rate * 0.6)  # 0.3-0.9
+            weights.append(0.3)  # 30%权重
+
+        # 3. 角色完整性
+        essential_roles = ['subject', 'verb']
+        found_essentials = sum(1 for role in essential_roles if role in grammar_roles)
+        completeness = found_essentials / len(essential_roles)
+        confidence_factors.append(completeness)
+        weights.append(0.2)  # 20%权重
+
+        # 4. 来源可靠性
+        source_reliability = {
+            'mt5': 0.3,  # 当前MT5准确率
+            'case_marker': 0.7,  # 格标记相对可靠
+            'pos_tag': 0.8,  # 词性标注可靠
+            'combined': 0.5  # 综合判断
+        }
+
+        sources = [role.get('source', 'mt5') for role in grammar_roles.values()
+                  if isinstance(role, dict)]
+        if sources:
+            avg_source_reliability = sum(source_reliability.get(s, 0.3) for s in sources) / len(sources)
+            confidence_factors.append(avg_source_reliability)
+            weights.append(0.1)  # 10%权重
+
+        # 加权平均
+        if confidence_factors:
+            total_weight = sum(weights)
+            weighted_confidence = sum(f * w for f, w in zip(confidence_factors, weights)) / total_weight
+            return round(weighted_confidence, 3)
+
+        return 0.3  # 默认基础置信度
+
+    def get_analysis_summary(self, results):
+        """获取分析摘要 - 新增辅助方法"""
+        summary = {
+            'complexity_level': self._get_complexity_level(results['complexity']['corrected']),
+            'has_grammar_analysis': 'grammar_roles' in results,
+            'grammar_confidence_level': self._get_confidence_level(results.get('grammar_confidence', 0)),
+            'semantic_density_level': self._get_density_level(results['semantic_density']),
+            'recommended_processing': self._recommend_processing(results)
+        }
+        return summary
+
+    def _get_complexity_level(self, score):
+        """将复杂度分数转换为等级"""
+        if score < 0.3:
+            return 'simple'
+        elif score < 0.7:
+            return 'medium'
+        else:
+            return 'complex'
+
+    def _get_confidence_level(self, score):
+        """将置信度分数转换为等级"""
+        if score < 0.4:
+            return 'low'
+        elif score < 0.7:
+            return 'medium'
+        else:
+            return 'high'
+
+    def _get_density_level(self, score):
+        """将密度分数转换为等级"""
+        if score < 0.3:
+            return 'sparse'
+        elif score < 0.7:
+            return 'moderate'
+        else:
+            return 'dense'
+
+    def _recommend_processing(self, results):
+        """基于分析结果推荐处理策略"""
+        complexity = results['complexity']['corrected']
+        grammar_confidence = results.get('grammar_confidence', 0)
+
+        if complexity < 0.3 and grammar_confidence > 0.6:
+            return 'minimal'
+        elif complexity > 0.7 or grammar_confidence < 0.3:
+            return 'deep'
+        else:
+            return 'standard'
+2.3语法角色决策器
+class GrammarRoleDecisionMaker:
+    def __init__(self):
+        self.mt5_accuracy = 0.3  # 当前准确率
+
+    def should_use_grammar_roles(self, complexity, confidence):
+        """基于复杂度和置信度决定是否使用语法角色"""
+        # 只对复杂句且有一定置信度时使用
+        return complexity > 0.4 and confidence > 0.3
+
+    def get_processing_strategy(self, metadata):
+        """获取处理策略"""
+        confidence = metadata.get('grammar_confidence', 0)
+
+        if confidence < 0.3:
+            return 'minimal_grammar_intervention'
+        elif confidence < 0.6:
+            return 'grammar_verification_only'
+        else:
+            return 'active_grammar_optimization'
+
+2.4 维度适配器（新增）
+class DimensionAdapter:
+    """➕新增：TiBERT(768)→MT5(1024)维度适配"""
+
+    def __init__(self):
+        self.projection = nn.Linear(768, 1024)
+        self.projection.load_state_dict(torch.load('adapter_weights.pt'))
+
+    def adapt(self, tibert_output):
+        """维度转换"""
+        return self.projection(tibert_output)
+
+3. 知识库查询模块（优化版）
+class OptimizedKnowledgeBase:
+    """整合的知识库系统"""
+
+    def __init__(self):
+        self.term_db = TermDatabase()  # 66.7%覆盖率
+        self.synonym_db = SynonymDatabase()  # 66.7%扩展率
+        self.tm_db = TranslationMemory()  # 调整阈值到0.5
+        self.param_db = ParameterRecommender()  # 新增
+
+    def query_term(self, term, context=None):
+        """术语查询 - ✅保留"""
+        # 1. 精确匹配
+        exact = self.term_db.exact_match(term)
+        if exact:
+            return exact
+
+        # 2. 模糊匹配
+        fuzzy = self.term_db.fuzzy_match(term)
+        if fuzzy and context:
+            # 3. 上下文选择最佳
+            return self.select_by_context(fuzzy, context)
+
+        return fuzzy
+
+    def get_translation_params(self, complexity_score):
+        """➕新增：基于复杂度推荐参数"""
+        if complexity_score < 0.3:
+            return {
+                'num_beams': 3,
+                'temperature': 1.0,
+                'repetition_penalty': 1.25,  # 固定最优值
+                'length_penalty': 0.8
+            }
+        elif complexity_score < 0.7:
+            return {
+                'num_beams': 5,
+                'temperature': 0.9,
+                'repetition_penalty': 1.25,
+                'length_penalty': 1.0
+            }
+        else:
+            return {
+                'num_beams': 8,
+                'temperature': 0.8,
+                'repetition_penalty': 1.25,
+                'length_penalty': 1.2
+            }
+
+4. 元数据管理器（新增）
+class MetadataManager:
+    """元数据管理器 - 统一管理各模型的分析结果"""
+
+    def __init__(self):
+        self.sentence_metadata = {}
+        self.grammar_decision_maker = GrammarRoleDecisionMaker()
+
+    def collect_analysis(self, sentence_id, source, analysis_data):
+        """收集各模型的分析结果"""
+        # 初始化句子元数据结构
+        if sentence_id not in self.sentence_metadata:
+            self.sentence_metadata[sentence_id] = {
+                'source_text': source,
+                'tibert': {},
+                'mt5': {},
+                'knowledge': {}
+            }
+
+        # 根据数据类型更新对应的分析结果
+        if 'terms' in analysis_data:
+            # TiBERT的分析结果
+            self.sentence_metadata[sentence_id]['tibert'].update(analysis_data)
+
+        elif 'complexity' in analysis_data:
+            # MT5的分析结果
+            self.sentence_metadata[sentence_id]['mt5'].update(analysis_data)
+
+            # 如果MT5分析包含语法角色，决定是否使用
+            if 'grammar_roles' in analysis_data:
+                self._process_grammar_roles(sentence_id, analysis_data)
+
+        else:
+            # 知识库查询结果
+            self.sentence_metadata[sentence_id]['knowledge'].update(analysis_data)
+
+    def _process_grammar_roles(self, sentence_id, mt5_data):
+        """处理语法角色信息，决定是否使用
+
+        目的：因为MT5语法识别只有30%准确率，需要智能决定何时使用
+        """
+        complexity = mt5_data['complexity']['corrected']
+        confidence = mt5_data.get('grammar_confidence', 0)
+
+        # 使用决策器判断是否应该使用语法角色
+        if self.grammar_decision_maker.should_use_grammar_roles(complexity, confidence):
+            # 标记该句子可以使用语法角色信息
+            self.sentence_metadata[sentence_id]['use_grammar_roles'] = True
+
+            # 获取处理策略（minimal/verification/active）
+            strategy = self.grammar_decision_maker.get_processing_strategy({
+                'complexity': complexity,
+                'grammar_confidence': confidence
+            })
+            self.sentence_metadata[sentence_id]['grammar_strategy'] = strategy
+        else:
+            # 不使用语法角色
+            self.sentence_metadata[sentence_id]['use_grammar_roles'] = False
+            self.sentence_metadata[sentence_id]['grammar_strategy'] = 'skip'
+
+    def get_translation_context(self, sentence_id):
+        """获取翻译所需的完整上下文
+
+        目的：为NLLB翻译和后处理提供所需的所有信息
+        """
+        meta = self.sentence_metadata.get(sentence_id, {})
+
+        # 构建翻译上下文
+        context = {
+            'source': meta.get('source_text', ''),
+            'terms': meta.get('tibert', {}).get('terms', []),
+            'case_markers': meta.get('tibert', {}).get('case_markers', []),  # 新增
+            'honorifics': meta.get('tibert', {}).get('honorifics', []),
+            'complexity': meta.get('mt5', {}).get('complexity', {}).get('corrected', 0.5),
+            'semantic_density': meta.get('mt5', {}).get('semantic_density', 0.5),  # 新增
+        }
+
+        # 智能处理语法信息
+        if meta.get('use_grammar_roles', False):
+            # 只有在决定使用时才包含语法角色
+            context['grammar'] = meta.get('mt5', {}).get('grammar_roles', {})
+            context['grammar_strategy'] = meta.get('grammar_strategy', 'skip')
+        else:
+            context['grammar'] = {}
+            context['grammar_strategy'] = 'skip'
+
+        # 添加知识库信息
+        context['params'] = meta.get('knowledge', {}).get('recommended_params', {})
+        context['term_translations'] = meta.get('knowledge', {}).get('term_translations', {})
+
+        return context
+
+    def update_with_knowledge(self, sentence_id, knowledge_data):
+        """更新知识库查询结果
+
+        目的：将术语翻译、参数推荐等知识库信息添加到元数据
+        """
+        if sentence_id in self.sentence_metadata:
+            self.sentence_metadata[sentence_id]['knowledge'].update(knowledge_data)
+
+    def get_sentence_summary(self, sentence_id):
+        """获取句子分析摘要
+
+        目的：快速了解句子的关键特征，用于调试和监控
+        """
+        meta = self.sentence_metadata.get(sentence_id, {})
+
+        return {
+            'has_terms': len(meta.get('tibert', {}).get('terms', [])) > 0,
+            'term_count': len(meta.get('tibert', {}).get('terms', [])),
+            'complexity_level': self._get_complexity_level(
+                meta.get('mt5', {}).get('complexity', {}).get('corrected', 0.5)
+            ),
+            'use_grammar': meta.get('use_grammar_roles', False),
+            'grammar_strategy': meta.get('grammar_strategy', 'skip'),
+            'has_honorifics': len(meta.get('tibert', {}).get('honorifics', [])) > 0
+        }
+
+    def _get_complexity_level(self, score):
+        """将复杂度分数转换为等级"""
+        if score < 0.3:
+            return 'simple'
+        elif score < 0.7:
+            return 'medium'
+        else:
+            return 'complex'
+
+    def should_use_cache_only(self, sentence_id):
+        """判断是否可以只使用缓存
+
+        目的：对于简单句子，可能不需要复杂分析，直接使用缓存
+        """
+        meta = self.sentence_metadata.get(sentence_id, {})
+        complexity = meta.get('mt5', {}).get('complexity', {}).get('corrected', 0.5)
+
+        # 简单句子且没有特殊术语
+        if complexity < 0.3 and not meta.get('tibert', {}).get('terms', []):
+            return True
+        return False
+
+5. NLLB翻译引擎（优化版）
+class OptimizedNLLBEngine:
+    """优化的NLLB翻译引擎"""
+
+    def __init__(self):
+        self.nllb = NLLBModel()
+        self.cache = TranslationCache(size=10000)  # large_cache配置
+        self.consistency_manager = DocumentConsistencyManager()  #增加一致性管理
+    def translate_with_context(self, source, metadata):
+        """基于元数据的智能翻译"""
+        # 1. 检查缓存
+        cached = self.cache.get(source)
+        if cached:
+            return cached
+
+        # 2. 设置参数
+        params = metadata.get('params', self.default_params)
+        params['repetition_penalty'] = 1.25  # 固定最优值
+
+        # 3. 构建上下文
+        context_window = self.build_context_window(source, metadata)
+
+        # 4. 执行翻译
+        translation = self.nllb.translate(
+            context_window,
+            **params
+        )
+
+        # 5. 应用文档一致性（← 新增这一步）
+        translation = self._apply_term_consistency(translation, metadata)
+
+        # 6. 缓存结果
+        self.cache.put(source, translation)
+
+        return translation
+
+
+6. 智能后处理器（增强版）
+class EnhancedPostProcessor:
+    """增强的后处理器"""
+
+    def __init__(self):
+        self.error_corrector = ErrorCorrector()  # 100%成功率
+        self.repetition_remover = RepetitionRemover()  # 100%成功率
+        self.metadata_restorer = MetadataRestorer()  # 保留
+        self.grammar_optimizer = GrammarOptimizer()  # 新增
+
+    def process(self, translation, metadata):
+        """完整的后处理流程"""
+        # 1. 基础修正（已验证100%有效）
+        result = self.error_corrector.correct(translation)
+        result = self.repetition_remover.remove(result)
+
+        # 2. 基于元数据的增强
+        result = self.restore_terms(result, metadata)
+        result = self.optimize_grammar(result, metadata)  # 调整：策略化处理
+        result = self.enhance_honorifics(result, metadata)
+
+        return result
+
+    def restore_terms(self, translation, metadata):
+        """➕新增：智能术语恢复"""
+        for term_info in metadata.get('terms', []):
+            # 基于位置信息和语义匹配恢复术语
+            translation = self.smart_replace(
+                translation,
+                term_info['source'],
+                term_info['target']
+            )
+        return translation
+
+    def optimize_grammar(self, translation, metadata):
+        """⚠️调整：基于策略的语法优化"""
+        # 获取语法处理策略
+        grammar_strategy = metadata.get('grammar_strategy', 'skip')
+
+        if grammar_strategy == 'skip':
+            # 无语法信息或决定不使用
+            return translation
+
+        # 根据策略调用不同的处理方法
+        return self.apply_grammar_strategy(translation, metadata, grammar_strategy)
+
+    def apply_grammar_strategy(self, translation, metadata, strategy):
+        """➕新增：分级语法处理"""
+        grammar = metadata.get('grammar', {})
+
+        if strategy == 'minimal_grammar_intervention':
+            # 最小干预：只修正明显错误
+            return self.fix_obvious_grammar_errors(translation, grammar)
+
+        elif strategy == 'grammar_verification_only':
+            # 验证模式：谨慎调整
+            if grammar.get('subject') and grammar.get('subject', {}).get('confidence', 0) > 0.6:
+                translation = self.ensure_chinese_word_order(translation, grammar)
+            return translation
+
+        elif strategy == 'active_grammar_optimization':
+            # 积极优化（未来MT5准确率提升后）
+            if grammar.get('subject') and grammar.get('object'):
+                translation = self.ensure_chinese_word_order(translation, grammar)
+            return translation
+
+        return translation
+
+    def enhance_honorifics(self, translation, metadata):
+        """➕新增：敬语增强"""
+        for honorific in metadata.get('honorifics', []):
+            translation = self.apply_honorific_rules(
+                translation,
+                honorific
+            )
+        return translation
+
+    def fix_obvious_grammar_errors(self, translation, grammar):
+        """➕新增：修正明显语法错误"""
+        # 只处理最明显的错误，避免过度干预
+        return self.basic_grammar_fix(translation, grammar)
+
+    def ensure_chinese_word_order(self, translation, grammar):
+        """确保中文SVO语序 - 保留原方法"""
+        # 原有的语序调整逻辑
+        return self.adjust_word_order(translation, grammar)
+
+
+
+
+五、一万字藏文文档的翻译时间：约7.6秒
+---------------------------------------------------------------------------------------------------------
+
+#剩余挑战与人工介入点
+仍需人工处理的方面：
+复杂哲学概念：需要专业知识判断
+诗偈韵律：需要文学素养
+宗派特定用语：需要领域专家
+歧义消解：需要深层理解
+
+
+#能力空缺分析与解决方案（作废）
+发现的关键空缺：
+1. 句子分割能力空缺
+问题：三个模型都是0%句子边界检测
+解决方案：
+Code
+规则基础分句器：
+- 使用藏文句号། 作为主要标记
+- 结合句子长度阈值（20-150字符）
+- 人工规则处理特殊情况（引号、括号等）
+- 后期人工校验关键分句点
+2. 助词理解空缺（除NLLB外）
+问题：只有NLLB理解助词，但翻译质量差
+解决方案：
+Code
+助词词典补充：
+- 建立完整的藏文助词词典
+- 标注每个助词的语法功能
+- 在预处理时添加语法标记
+- 帮助NLLB更好地理解句子结构
+3. 敬语系统空缺
+问题：TiBERT仅28.24%识别率，NLLB完全不保持
+解决方案：
+Code
+敬语规则库：
+- 建立敬语词汇对照表
+- 识别敬语使用场景（对佛陀、上师等）
+- 后处理时系统性替换
+- 保持全文敬语风格一致
+4. 语义角色理解空缺
+问题：最高仅33.3%（MT5），但MT5不能翻译
+解决方案：
+Code
+依存句法分析器：
+- 引入专门的藏文句法分析工具
+- 或使用规则识别基本施事/受事
+- 在预处理时标注关键角色
+- 辅助NLLB理解句子结构
+5. 平行结构保持空缺
+问题：NLLB平行结构保持0%
+解决方案：
+Code
+结构模板库：
+- 识别常见平行结构模式
+- 创建对应的中文模板
+- 后处理时强制应用模板
+- 确保结构对称性
+

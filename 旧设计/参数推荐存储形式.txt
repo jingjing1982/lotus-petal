@@ -1,0 +1,25 @@
+推荐：配置文件 + 动态学习
+
+YAML
+# config/translation_params.yaml
+complexity_levels:
+  simple:
+    num_beams: 3
+    temperature: 1.0
+    repetition_penalty: 1.25
+
+  medium:
+    num_beams: 5
+    temperature: 0.9
+    repetition_penalty: 1.25
+
+  complex:
+    num_beams: 8
+    temperature: 0.8
+    repetition_penalty: 1.25
+
+# 动态调整
+dynamic_adjustments:
+  high_term_density:
+    num_beams: +2
+    temperature: -0.1
