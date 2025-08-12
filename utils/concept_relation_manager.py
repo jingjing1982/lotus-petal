@@ -17,7 +17,7 @@ class ConceptRelationManager:
         self.relations = defaultdict(lambda: defaultdict(list))
         self.metadata = {}
 
-        # 加载关系
+        # 加载关系。1‘’
         self._load_relations()
 
     def _load_relations(self):

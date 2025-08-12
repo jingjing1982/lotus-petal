@@ -1,8 +1,12 @@
 """
 上下文提取器 - 提取并组织翻译所需的上下文信息
 """
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
+import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -51,6 +55,25 @@ class ContextExtractor:
     def __init__(self):
         """初始化上下文提取器"""
         self.min_confidence = 0.7
+
+    def _safe_get(self, obj: Any, key: str, default: Any = None) -> Any:
+        """安全获取对象属性或字典值"""
+        if obj is None:
+            return default
+
+        # 尝试属性访问
+        if hasattr(obj, key):
+            return getattr(obj, key)
+
+        # 尝试get方法访问
+        if hasattr(obj, 'get'):
+            return obj.get(key, default)
+
+        # 尝试字典式访问
+        try:
+            return obj[key]
+        except (TypeError, KeyError, IndexError):
+            return default
 
     # 在 context_extractor.py 的 extract_context 方法中修改
     def extract_context(self, botok_analysis: Dict, protection_map: Dict) -> TranslationContext:
@@ -130,9 +153,10 @@ class ContextExtractor:
         # 检查句子中的动词和时态标记
         sentence_tokens = sentence.get('tokens', [])
         for token in sentence_tokens:
-            if token.get('pos') == 'VERB':
+            # 使用安全获取方法替代直接get
+            if self._safe_get(token, 'pos') == 'VERB':
                 # 根据动词形态判断时态
-                verb_text = token.get('text', '')
+                verb_text = self._safe_get(token, 'text', '')
                 if verb_text.endswith(('བྱུང་', 'སོང་')):
                     return 'past'
                 elif verb_text.endswith(('གི་', 'གིན་')):
@@ -450,7 +474,8 @@ class ContextExtractor:
 
         # 分析词语重复模式
         tokens = botok_analysis.get('tokens', [])
-        token_texts = [t.get('text', '') for t in tokens]
+        # 修改此处使用_safe_get
+        token_texts = [self._safe_get(t, 'text', '') for t in tokens]
 
         # 查找重复模式
         patterns = []

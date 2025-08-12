@@ -60,17 +60,38 @@ class NLLBTranslator:
                 max_length=max_length
             ).to(self.device)
 
+            # 获取目标语言ID (兼容不同版本的API)
+            target_lang_id = None
+            try:
+                # 尝试使用lang_code_to_id (旧版API)
+                target_lang_id = self.tokenizer.lang_code_to_id[self.target_lang]
+            except (AttributeError, KeyError):
+                try:
+                    # 尝试使用convert_tokens_to_ids (新版API)
+                    target_lang_id = self.tokenizer.convert_tokens_to_ids(self.target_lang)
+                except:
+                    # 尝试直接获取语言ID
+                    logger.warning(f"无法确定目标语言ID，尝试其他方法")
+                    # 某些版本可能使用不同的API
+                    if hasattr(self.tokenizer, 'get_lang_id'):
+                        target_lang_id = self.tokenizer.get_lang_id(self.target_lang)
+
             # 生成翻译
             with torch.no_grad():
-                generated_tokens = self.model.generate(
+                generate_kwargs = {
                     **inputs,
-                    forced_bos_token_id=self.tokenizer.lang_code_to_id[self.target_lang],
-                    max_length=max_length,
-                    num_beams=num_beams,
-                    temperature=temperature,
-                    do_sample=False,  # 使用束搜索
-                    early_stopping=True
-                )
+                    "max_length": max_length,
+                    "num_beams": num_beams,
+                    "temperature": temperature,
+                    "do_sample": False,  # 使用束搜索
+                    "early_stopping": True
+                }
+
+                # 如果成功获取了目标语言ID，添加到参数中
+                if target_lang_id is not None:
+                    generate_kwargs["forced_bos_token_id"] = target_lang_id
+
+                generated_tokens = self.model.generate(**generate_kwargs)
 
             # 解码输出
             translation = self.tokenizer.batch_decode(

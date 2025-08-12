@@ -68,6 +68,22 @@ class GrammarCorrector:
 
         return result
 
+    def _split_into_sentences(self, text: str) -> List[str]:
+        """分割句子"""
+        # 保留标点符号的分割
+        sentences = re.split(r'([。！？；])', text)
+
+        # 重组句子（包含标点）
+        result = []
+        for i in range(0, len(sentences), 2):
+            if i + 1 < len(sentences):
+                result.append(sentences[i] + sentences[i + 1])
+            else:
+                if sentences[i].strip():
+                    result.append(sentences[i])
+
+        return result
+
     def _correct_sentence(self, sentence: str, sentence_index: int, context) -> str:
         """
         修正单个句子
@@ -104,24 +120,19 @@ class GrammarCorrector:
 
         return sentence
 
-    def _split_into_sentences(self, text: str) -> List[str]:
-        """分割句子"""
-        # 保留标点符号的分割
-        sentences = re.split(r'([。！？；])', text)
+    # 重命名此方法以避免重复
+    def _correct_sentence_with_analysis(self, sentence: str, analysis: Dict, context) -> str:
+        """
+        基于分析结果修正单个句子
 
-        # 重组句子（包含标点）
-        result = []
-        for i in range(0, len(sentences), 2):
-            if i + 1 < len(sentences):
-                result.append(sentences[i] + sentences[i + 1])
-            else:
-                if sentences[i].strip():
-                    result.append(sentences[i])
+        Args:
+            sentence: 需要修正的句子
+            analysis: 句子的语法分析结果
+            context: 上下文信息
 
-        return result
-
-    def _correct_sentence(self, sentence: str, analysis: Dict, context) -> str:
-        """修正单个句子"""
+        Returns:
+            修正后的句子
+        """
         # 1. 处理格助词
         if analysis.get('case_particles'):
             sentence = self._process_case_particles(sentence, analysis['case_particles'])
@@ -585,46 +596,6 @@ class GrammarCorrector:
         """判断句子是否为正式/典雅风格"""
         formal_indicators = ['之', '乃', '者', '也', '矣', '焉', '尊者', '如是', '世尊']
         return any(indicator in sentence for indicator in formal_indicators)
-
-    def _apply_past_tense(self, sentence: str) -> str:
-        """应用过去时"""
-        # 确保有过去时标记
-        if not any(marker in sentence for marker in ['了', '过', '曾经', '已经']):
-            # 找到主要动词并添加"了"
-            verbs = self._find_main_verbs(sentence)
-            if verbs:
-                main_verb = verbs[0]
-                sentence = sentence.replace(main_verb, f"{main_verb}了")
-
-        return sentence
-
-    def _apply_present_tense(self, sentence: str) -> str:
-        """应用现在时"""
-        # 中文现在时通常不需要特殊标记
-        # 但要移除不当的时态标记
-        sentence = re.sub(r'了(?=[，。！？])', '', sentence)
-        return sentence
-
-    def _apply_future_tense(self, sentence: str) -> str:
-        """应用将来时"""
-        if not any(marker in sentence for marker in ['将', '会', '要', '即将']):
-            # 在动词前添加将来时标记
-            verbs = self._find_main_verbs(sentence)
-            if verbs:
-                main_verb = verbs[0]
-                sentence = sentence.replace(main_verb, f"将{main_verb}")
-
-        return sentence
-
-    def _apply_progressive(self, sentence: str) -> str:
-        """应用进行时"""
-        if not any(marker in sentence for marker in ['正在', '在', '着']):
-            verbs = self._find_main_verbs(sentence)
-            if verbs:
-                main_verb = verbs[0]
-                sentence = sentence.replace(main_verb, f"正在{main_verb}")
-
-        return sentence
 
     def _find_main_verbs(self, sentence: str) -> List[str]:
         """智能识别句子中的主要动词"""

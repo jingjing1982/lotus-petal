@@ -581,11 +581,11 @@ class FlexibleContextDetector:
 class TermDatabase:
     def __init__(self, db_path: Optional[Path] = None, context_detector=None):
         """初始化术语数据库"""
-
         self.db_path = db_path or Path("terms.db")
-        self.conn = None
-        self.cursor = None
 
+        # 建立数据库连接
+        self.conn = sqlite3.connect(str(self.db_path))
+        self.cursor = self.conn.cursor()
 
         # 缓存常用术语
         self.cache = {}
@@ -594,14 +594,24 @@ class TermDatabase:
         # 文本语境识别器
         self.context_detector = context_detector or FlexibleContextDetector()
 
-        # 初始化数据库 - 只调用一次
-        # self._init_database()
+        # 检查数据库是否需要初始化
+        self._check_database()
 
-    def _init_database(self):
-        """初始化数据库结构"""
-        self.conn = sqlite3.connect(str(self.db_path))
-        self.cursor = self.conn.cursor()
+    def _check_database(self):
+        """检查数据库是否已初始化，如果没有则初始化"""
+        try:
+            # 简单检查是否存在必要的表
+            self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='terms'")
+            if not self.cursor.fetchone():
+                # 数据库需要初始化
+                self._create_database_schema()
+                logger.info("数据库结构已初始化")
+        except Exception as e:
+            logger.error(f"检查数据库状态失败: {e}")
+            raise
 
+    def _create_database_schema(self):
+        """创建数据库表结构 - 只有在首次使用或显式调用时执行"""
         # 主术语表
         self.cursor.execute('''
                             CREATE TABLE IF NOT EXISTS terms
@@ -755,17 +765,44 @@ class TermDatabase:
 
         # 概念关系表
         self.cursor.execute('''
-                                CREATE TABLE concept_relations (
-                                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                    relation_type TEXT NOT NULL,  -- opposite, includes, stage, method_goal, related
-                                    source_concept TEXT NOT NULL,
-                                    target_concept TEXT NOT NULL,
-                                    bidirectional BOOLEAN DEFAULT FALSE,
-                                    confidence FLOAT DEFAULT 1.0,  -- 关系可信度
-                                    source_type TEXT DEFAULT 'manual',  -- manual, extracted, learned
-                                    reference_text TEXT,  -- 来源文本或引用
-                                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                                )
+                            CREATE TABLE IF NOT EXISTS concept_relations
+                            (
+                                id
+                                INTEGER
+                                PRIMARY
+                                KEY
+                                AUTOINCREMENT,
+                                relation_type
+                                TEXT
+                                NOT
+                                NULL,
+                                source_concept
+                                TEXT
+                                NOT
+                                NULL,
+                                target_concept
+                                TEXT
+                                NOT
+                                NULL,
+                                bidirectional
+                                BOOLEAN
+                                DEFAULT
+                                FALSE,
+                                confidence
+                                FLOAT
+                                DEFAULT
+                                1.0,
+                                source_type
+                                TEXT
+                                DEFAULT
+                                'manual',
+                                reference_text
+                                TEXT,
+                                created_at
+                                TIMESTAMP
+                                DEFAULT
+                                CURRENT_TIMESTAMP
+                            )
                             ''')
 
         # 创建索引
@@ -773,8 +810,11 @@ class TermDatabase:
         self.cursor.execute(
             'CREATE INDEX IF NOT EXISTS idx_translations ON translations(term_id, context_label, function_label)')
         self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_combinations ON term_combinations(combined_tibetan)')
-        self.cursor.execute('CREATE INDEX idx_relation_source ON concept_relations(relation_type, source_concept)')
-        self.cursor.execute('CREATE INDEX idx_relation_target ON concept_relations(relation_type, target_concept)')
+        self.cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_relation_source ON concept_relations(relation_type, source_concept)')
+        self.cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_relation_target ON concept_relations(relation_type, target_concept)')
+
         self.conn.commit()
 
     def add_term(self, tibetan: str, **kwargs) -> int:
@@ -1611,4 +1651,59 @@ class TermDatabase:
 
         except Exception as e:
             logger.error(f"获取相关术语失败: {e}")
+            return []
+
+    def get_translations_for_term(self, tibetan_term: str) -> List[Dict]:
+        """获取特定藏文术语的所有翻译"""
+        try:
+            # 处理藏文末尾的点(་)
+            clean_tibetan = tibetan_term.rstrip('་')
+
+            # 首先尝试完全匹配
+            self.cursor.execute('SELECT id FROM terms WHERE tibetan = ?', (tibetan_term,))
+            term_row = self.cursor.fetchone()
+
+            # 如果没找到，尝试去掉尾部的点
+            if not term_row and tibetan_term != clean_tibetan:
+                self.cursor.execute('SELECT id FROM terms WHERE tibetan = ?', (clean_tibetan,))
+                term_row = self.cursor.fetchone()
+
+            if not term_row:
+                logger.warning(f"术语不存在: {tibetan_term}")
+                return []
+
+            term_id = term_row[0]
+
+            # 获取该术语的所有翻译
+            self.cursor.execute('''
+                                SELECT chinese,
+                                       context_label,
+                                       function_label,
+                                       priority,
+                                       is_primary,
+                                       usage_count,
+                                       interpretation_level,
+                                       is_direct_translation
+                                FROM translations
+                                WHERE term_id = ?
+                                ORDER BY priority DESC, is_primary DESC
+                                ''', (term_id,))
+
+            translations = []
+            for row in self.cursor.fetchall():
+                translations.append({
+                    'chinese': row[0],
+                    'context_label': row[1],
+                    'function_label': row[2],
+                    'priority': row[3],
+                    'is_primary': bool(row[4]),
+                    'usage_count': row[5] if len(row) > 5 else 0,
+                    'interpretation_level': row[6] if len(row) > 6 else 3,
+                    'is_direct_translation': bool(row[7]) if len(row) > 7 else False
+                })
+
+            return translations
+
+        except Exception as e:
+            logger.error(f"获取术语翻译失败: {e}")
             return []

@@ -283,7 +283,16 @@ class TextFinalizer:
         return text
 
     def _handle_special_formats(self, text: str, context) -> str:
-        """处理特殊格式"""
+        """
+        处理各种特殊格式
+
+        Args:
+            text: 要处理的文本
+            context: 上下文信息
+
+        Returns:
+            处理后的文本
+        """
         from .adapter import ProcessingAdapter
 
         # 获取上下文信息
@@ -304,6 +313,18 @@ class TextFinalizer:
 
         # 4. 处理数字格式
         text = self._format_numbers(text)
+
+        # 5. 处理引用格式 (来自第二个方法)
+        text = self._format_quotations(text, buddhist_context)
+
+        # 6. 处理列表格式
+        text = self._format_lists(text)
+
+        # 7. 处理标题格式
+        text = self._format_titles(text)
+
+        # 8. 处理佛经特殊格式
+        text = self._format_sutra_conventions(text, context)
 
         return text
 
@@ -492,30 +513,7 @@ class TextFinalizer:
 
         return text
 
-    def _format_parallel_structure(self, text: str, context) -> str:
-        """格式化平行结构"""
-        for pattern in context.parallel_patterns:
-            if pattern['type'] == 'negation':
-                # 格式化否定平行结构
-                # 例如：不杀生、不偷盗、不邪淫
-                neg_items = []
-                for pos in pattern['positions']:
-                    # 提取每个否定项
-                    # 这需要更复杂的处理
-                    pass
-
-        # 识别并格式化平行结构
-        parallel_patterns = [
-            (r'(不\S{1,4})[，、](不\S{1,4})[，、](不\S{1,4})',
-             lambda m: f"{m.group(1)}、{m.group(2)}、{m.group(3)}"),
-            (r'(无\S{1,4})[，、](无\S{1,4})[，、](无\S{1,4})',
-             lambda m: f"{m.group(1)}、{m.group(2)}、{m.group(3)}"),
-        ]
-
-        for pattern, formatter in parallel_patterns:
-            text = re.sub(pattern, formatter, text)
-
-        return text
+    # 移除重复的_format_parallel_structure方法，上面已经定义过了
 
     def _format_enumeration(self, text: str, context) -> str:
         """
@@ -1225,40 +1223,6 @@ class TextFinalizer:
 
         return paragraphs
 
-    def _handle_special_formats(self, text: str, context) -> str:
-        """处理特殊格式"""
-        # 1. 处理引用格式
-        text = self._format_quotations(text)
-
-        # 2. 处理列表格式
-        text = self._format_lists(text)
-
-        # 3. 处理标题格式
-        text = self._format_titles(text)
-
-        # 4. 处理佛经特殊格式
-        text = self._format_sutra_conventions(text, context)
-
-        return text
-
-    def _format_quotations(self, text: str) -> str:
-        """格式化引用"""
-        # 处理直接引语
-        # 查找 "...说：" 或 "...道：" 模式
-        quote_patterns = [
-            (r'(\S{1,4}[说道言曰])：\s*"([^"]+)"', r'\1："\2"'),
-            (r'(\S{1,4}[说道言曰])：\s*\'([^\']+)\'', r'\1："\2"'),
-            (r'(\S{1,4}[说道言曰])：(.{1,50}[。！？])', r'\1："\2"'),
-        ]
-
-        for pattern, replacement in quote_patterns:
-            text = re.sub(pattern, replacement, text)
-
-        # 确保引号成对
-        text = self._balance_quotes(text)
-
-        return text
-
     def _balance_quotes(self, text: str) -> str:
         """平衡引号"""
         # 统计引号
@@ -1370,44 +1334,9 @@ class TextFinalizer:
 
         return text
 
-    def _final_check(self, text: str) -> str:
-        """最终检查和清理"""
-        # 1. 删除多余的空白
-        text = re.sub(r'\n{3,}', '\n\n', text)  # 最多两个连续换行
-        text = re.sub(r' {2,}', ' ', text)  # 删除多余空格
-        text = re.sub(r'\t+', ' ', text)  # 替换制表符
-
-        # 2. 修复常见的格式错误
-        text = re.sub(r'([。！？])\1+', r'\1', text)  # 删除重复标点
-        text = re.sub(r'，\s*。', '。', text)  # 逗号句号连用
-        text = re.sub(r'([，。！？；：、])\s+([，。！？；：、])', r'\1\2', text)  # 标点之间的空格
-
-        # 3. 确保段落格式正确
-        paragraphs = text.split('\n')
-        cleaned_paragraphs = []
-
-        for para in paragraphs:
-            para = para.strip()
-            if para:  # 只保留非空段落
-                # 确保段落以标点结尾
-                if para and para[-1] not in '。！？；：】》）"\'':
-                    para += '。'
-                cleaned_paragraphs.append(para)
-            elif cleaned_paragraphs and cleaned_paragraphs[-1] != '':
-                # 保留段落之间的空行
-                cleaned_paragraphs.append('')
-
-        # 4. 组合最终文本
-        final_text = '\n'.join(cleaned_paragraphs)
-
-        # 5. 最后的微调
-        final_text = self._apply_final_touches(final_text)
-
-        return final_text
-
     def _apply_final_touches(self, text: str) -> str:
         """应用最后的润色"""
-        # 确保开头没有空白6
+        # 确保开头没有空白
         text = text.lstrip()
 
         # 确保结尾合适

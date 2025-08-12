@@ -9,8 +9,11 @@ logger = logging.getLogger(__name__)
 
 
 class TermRestorer:
-    def __init__(self):
+    def __init__(self, term_database=None):
         """初始化术语恢复器"""
+        # 保存术语数据库引用
+        self.term_database = term_database
+
         # 上下文相关的术语选择规则
         self.context_rules = {
             '法': {
@@ -25,6 +28,8 @@ class TermRestorer:
             }
         }
 
+        logger.debug("术语恢复器初始化完成，term_database是否存在: %s", term_database is not None)
+
     def restore(self, text: str, context) -> str:
         """恢复所有术语"""
         # 使用适配器获取术语映射
@@ -33,6 +38,10 @@ class TermRestorer:
 
         if not term_mappings:
             return text
+
+        # 添加调试日志
+        logger.debug(f"开始恢复术语，映射表：{term_mappings}")
+        logger.debug(f"恢复前文本：{text}")
 
         restored_text = text
 
@@ -58,32 +67,112 @@ class TermRestorer:
 
                     # 执行替换
                     restored_text = restored_text.replace(placeholder, chinese_term)
-
                     logger.debug(f"Restored {placeholder} -> {chinese_term}")
+                else:
+                    # 检查数字格式的占位符
+                    numeric_placeholder = placeholder.lstrip("TERM")
+                    if numeric_placeholder.isdigit() and numeric_placeholder in restored_text:
+                        term_info = term_mappings[placeholder]
+                        chinese_term = self._select_best_translation(
+                            restored_text,
+                            placeholder,
+                            term_info
+                        )
+                        restored_text = restored_text.replace(numeric_placeholder, chinese_term)
+                        logger.debug(f"Restored numeric {numeric_placeholder} -> {chinese_term}")
 
+            logger.debug(f"恢复后文本：{restored_text}")
             return restored_text
 
-        # 复杂文本处理：构建术语网络并考虑术语关系
-        term_network = self._build_term_network(term_mappings)
+        try:
+            # 复杂文本处理：构建术语网络并考虑术语关系
+            term_network = self._build_term_network(term_mappings)
 
-        for placeholder in sorted_placeholders:
-            if placeholder in restored_text:
-                term_info = term_mappings[placeholder]
+            for placeholder in sorted_placeholders:
+                if placeholder in restored_text:
+                    term_info = term_mappings[placeholder]
 
-                # 获取最适合的中文翻译，考虑术语网络
-                chinese_term = self._select_best_translation_with_network(
-                    restored_text,
-                    placeholder,
-                    term_info,
-                    term_network
-                )
+                    # 获取最适合的中文翻译，考虑术语网络
+                    chinese_term = self._select_best_translation_with_network(
+                        restored_text,
+                        placeholder,
+                        term_info,
+                        term_network
+                    )
 
-                # 执行替换
-                restored_text = restored_text.replace(placeholder, chinese_term)
+                    # 执行替换
+                    restored_text = restored_text.replace(placeholder, chinese_term)
+                    logger.debug(f"Restored {placeholder} -> {chinese_term}")
+                else:
+                    # 检查数字格式的占位符
+                    numeric_placeholder = placeholder.lstrip("TERM")
+                    if numeric_placeholder.isdigit() and numeric_placeholder in restored_text:
+                        term_info = term_mappings[placeholder]
+                        chinese_term = self._select_best_translation_with_network(
+                            restored_text,
+                            placeholder,
+                            term_info,
+                            term_network
+                        )
+                        restored_text = restored_text.replace(numeric_placeholder, chinese_term)
+                        logger.debug(f"Restored numeric {numeric_placeholder} -> {chinese_term}")
+        except Exception as e:
+            logger.error(f"术语网络处理失败，回退到简单替换: {e}")
+            # 如果网络处理失败，回退到简单替换
+            for placeholder in sorted_placeholders:
+                if placeholder in restored_text:
+                    term_info = term_mappings[placeholder]
+                    # 使用安全的基本翻译方法
+                    chinese_term = self._safe_basic_translation(term_info)
+                    restored_text = restored_text.replace(placeholder, chinese_term)
+                    logger.debug(f"安全回退替换 {placeholder} -> {chinese_term}")
+                else:
+                    # 检查数字格式的占位符
+                    numeric_placeholder = placeholder.lstrip("TERM")
+                    if numeric_placeholder.isdigit() and numeric_placeholder in restored_text:
+                        term_info = term_mappings[placeholder]
+                        chinese_term = self._safe_basic_translation(term_info)
+                        restored_text = restored_text.replace(numeric_placeholder, chinese_term)
+                        logger.debug(f"安全回退替换数字 {numeric_placeholder} -> {chinese_term}")
 
-                logger.debug(f"Restored {placeholder} -> {chinese_term}")
-
+        logger.debug(f"恢复后文本：{restored_text}")
         return restored_text
+
+    def _safe_basic_translation(self, term_info: Dict) -> str:
+        """安全的基本翻译方法，不依赖数据库"""
+        # 尝试从术语信息中直接获取翻译
+        tibetan = term_info.get('tibetan', '')
+        chinese = term_info.get('chinese', '')
+
+        if chinese:
+            return chinese
+
+        # 为常见藏文术语提供默认翻译
+        common_terms = {
+            'སངས་རྒྱས': '佛陀',
+            'ཆོས': '佛法',
+            'དགེ་འདུན': '僧伽',
+            'སེམས་ཅན': '众生',
+            'བྱང་ཆུབ': '菩提',
+            'སྟོང་པ་ཉིད': '空性',
+            'གསུངས': '宣说',
+            'ཀྱིས': '',  # 助词，通常不单独翻译
+        }
+
+        if tibetan in common_terms:
+            return common_terms[tibetan]
+
+        # 根据类型提供默认翻译
+        term_type = term_info.get('type', '')
+        if term_type == 'buddha_name':
+            return '佛陀'
+        elif term_type == 'sutra_name':
+            return '经'
+        elif term_type == 'dharma_term':
+            return '佛法'
+
+        # 实在没有合适的翻译，返回藏文
+        return f"[{tibetan}]" if tibetan else "[术语]"
 
     def _build_term_network(self, term_mappings: Dict) -> Dict:
         """
@@ -111,7 +200,7 @@ class TermRestorer:
                 }
 
         # 查询术语之间的关系 - 只在有多个术语时进行
-        if len(term_network['terms']) >= 2:
+        if len(term_network['terms']) >= 2 and self.term_database:
             for tibetan_term in term_network['terms'].keys():
                 try:
                     related_terms = self.term_database.get_related_terms(tibetan_term)
@@ -251,7 +340,7 @@ class TermRestorer:
         tibetan_term = term_info.get('tibetan', '')
 
         if not tibetan_term:
-            return term_info.get('default_translation', placeholder)
+            return self._safe_basic_translation(term_info)
 
         # 1. 首先使用标准方法获取最佳翻译
         best_translation = self._select_best_translation(text, placeholder, term_info)
@@ -302,19 +391,20 @@ class TermRestorer:
                     if other_placeholder and other_placeholder not in text:
                         # 尝试查找对立术语的翻译
                         try:
-                            translations = self.term_database.get_translations_for_term(other_term)
-                            if translations:
-                                other_translation = translations[0].get('chinese', '')
+                            if self.term_database:
+                                translations = self.term_database.get_translations_for_term(other_term)
+                                if translations:
+                                    other_translation = translations[0].get('chinese', '')
 
-                                # 确保翻译词对立
-                                if self._are_terms_opposite(translation, other_translation):
-                                    # 保持对立关系
-                                    return translation
-                                else:
-                                    # 找到更好的对立术语
-                                    better_opposite = self._find_better_opposite(translation, other_translation)
-                                    if better_opposite:
-                                        return better_opposite
+                                    # 确保翻译词对立
+                                    if self._are_terms_opposite(translation, other_translation):
+                                        # 保持对立关系
+                                        return translation
+                                    else:
+                                        # 找到更好的对立术语
+                                        better_opposite = self._find_better_opposite(translation, other_translation)
+                                        if better_opposite:
+                                            return better_opposite
                         except Exception as e:
                             logger.error(f"检查对立术语失败: {e}")
 
@@ -336,21 +426,22 @@ class TermRestorer:
                         if other_placeholder and other_placeholder not in text:
                             # 尝试查找其他术语的翻译
                             try:
-                                translations = self.term_database.get_translations_for_term(other_term)
-                                if translations:
-                                    other_translation = translations[0].get('chinese', '')
+                                if self.term_database:
+                                    translations = self.term_database.get_translations_for_term(other_term)
+                                    if translations:
+                                        other_translation = translations[0].get('chinese', '')
 
-                                    # 确保包含关系一致
-                                    if is_superordinate:
-                                        # 当前术语是上位概念
-                                        if not self._is_superordinate_term(translation, other_translation):
-                                            # 调整翻译以保持上位关系
-                                            return self._adjust_for_superordinate(translation, other_translation)
-                                    else:
-                                        # 当前术语是下位概念
-                                        if not self._is_subordinate_term(translation, other_translation):
-                                            # 调整翻译以保持下位关系
-                                            return self._adjust_for_subordinate(translation, other_translation)
+                                        # 确保包含关系一致
+                                        if is_superordinate:
+                                            # 当前术语是上位概念
+                                            if not self._is_superordinate_term(translation, other_translation):
+                                                # 调整翻译以保持上位关系
+                                                return self._adjust_for_superordinate(translation, other_translation)
+                                        else:
+                                            # 当前术语是下位概念
+                                            if not self._is_subordinate_term(translation, other_translation):
+                                                # 调整翻译以保持下位关系
+                                                return self._adjust_for_subordinate(translation, other_translation)
                             except Exception as e:
                                 logger.error(f"检查包含术语失败: {e}")
 
@@ -452,57 +543,63 @@ class TermRestorer:
         Returns:
             选择的中文翻译
         """
-        # 1. 获取术语信息
-        tibetan_term = term_info.get('tibetan', '')
-
-        if not tibetan_term:
-            return term_info.get('default_translation', placeholder)
-
-        # 2. 提取术语上下文
-        term_context = self._extract_term_context(text, placeholder)
-
-        # 3. 从数据库获取候选翻译
         try:
-            translations = self.term_database.get_translations_for_term(tibetan_term)
-        except Exception as e:
-            logger.error(f"获取术语翻译失败: {e}")
+            # 1. 获取术语信息
+            tibetan_term = term_info.get('tibetan', '')
+
+            if not tibetan_term:
+                return self._safe_basic_translation(term_info)
+
+            # 2. 提取术语上下文
+            term_context = self._extract_term_context(text, placeholder)
+
+            # 3. 从数据库获取候选翻译
             translations = []
+            if self.term_database:
+                try:
+                    translations = self.term_database.get_translations_for_term(tibetan_term)
+                except Exception as e:
+                    logger.error(f"获取术语翻译失败: {e}")
 
-        # 如果没有找到翻译，返回默认翻译
-        if not translations:
-            return term_info.get('default_translation', tibetan_term)
+            # 如果没有找到翻译，返回默认翻译
+            if not translations:
+                return self._safe_basic_translation(term_info)
 
-        # 4. 获取佛教语境信息
-        buddhist_context = term_info.get('context', {}).get('buddhist_context', 'GENERAL')
+            # 4. 获取佛教语境信息
+            buddhist_context = term_info.get('context', {}).get('buddhist_context', 'GENERAL')
 
-        # 5. 为每个翻译评分
-        scored_translations = []
+            # 5. 为每个翻译评分
+            scored_translations = []
 
-        for translation in translations:
-            chinese_term = translation.get('chinese', '')
-            if not chinese_term:
-                continue
+            for translation in translations:
+                chinese_term = translation.get('chinese', '')
+                if not chinese_term:
+                    continue
 
-            # 计算翻译分数
-            score = self._calculate_translation_score(
-                chinese_term, translation, term_context, buddhist_context
+                # 计算翻译分数
+                score = self._calculate_translation_score(
+                    chinese_term, translation, term_context, buddhist_context
+                )
+
+                scored_translations.append((chinese_term, score, translation))
+
+            # 6. 选择最高分的翻译
+            if not scored_translations:
+                return self._safe_basic_translation(term_info)
+
+            scored_translations.sort(key=lambda x: x[1], reverse=True)
+            best_translation, best_score, trans_info = scored_translations[0]
+
+            # 7. 应用语境适配（如数量、敬语等）
+            adapted_translation = self._adapt_translation_to_context(
+                best_translation, trans_info, text, placeholder, term_info
             )
 
-            scored_translations.append((chinese_term, score, translation))
+            return adapted_translation
 
-        # 6. 选择最高分的翻译
-        if not scored_translations:
-            return term_info.get('default_translation', tibetan_term)
-
-        scored_translations.sort(key=lambda x: x[1], reverse=True)
-        best_translation, best_score, trans_info = scored_translations[0]
-
-        # 7. 应用语境适配（如数量、敬语等）
-        adapted_translation = self._adapt_translation_to_context(
-            best_translation, trans_info, text, placeholder, term_info
-        )
-
-        return adapted_translation
+        except Exception as e:
+            logger.error(f"选择最佳翻译失败: {e}")
+            return self._safe_basic_translation(term_info)
 
     def _extract_term_context(self, text: str, placeholder: str) -> Dict:
         """
@@ -718,7 +815,6 @@ class TermRestorer:
         honorific_markers = ['尊', '圣', '佛', '菩萨', '上师', '尊者', '世尊']
 
         return any(marker in before_text or marker in after_text for marker in honorific_markers)
-
 
     def _should_use_extended_form(self, text: str, placeholder: str, base_term: str) -> bool:
         """判断是否应该使用扩展形式"""

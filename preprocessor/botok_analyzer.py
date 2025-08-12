@@ -2,14 +2,17 @@
 Botok分析器 - 负责藏文文本的语言学分析
 """
 import re
-from typing import List, Dict, Tuple, Optional
+import logging
+from typing import List, Dict, Tuple, Optional, Any
 from botok import Config, WordTokenizer
 from pathlib import Path
 from utils.term_database import TermDatabase
 
+logger = logging.getLogger(__name__)
+
 
 class BotokAnalyzer:
-    def __init__(self, config_path: Optional[Path] = None):
+    def __init__(self, config_path: Optional[Path] = None, term_database=None):
         """初始化Botok分析器"""
         if config_path:
             self.config = Config(base_path=config_path)
@@ -56,9 +59,9 @@ class BotokAnalyzer:
         # 句子结束标记
         self.sentence_endings = ['།', '༎', '༏', '༐', '༑']
 
-        self.term_database = TermDatabase
+        self.term_database = term_database  # 存储实例而非类
         self.known_terms_cache = set()  # 缓存常用术语
-        if TermDatabase:
+        if self.term_database:
             self._load_terms_from_database()
 
     def _load_terms_from_database(self):
@@ -117,25 +120,87 @@ class BotokAnalyzer:
             tokens = self.tokenizer.tokenize(text)
 
             # 提取各类信息
+            token_info = self._extract_token_info(tokens)
+            sentences = self._detect_sentences(text, tokens)
+            terms = self._identify_terms(tokens)
+            grammar = self._analyze_grammar(tokens)
+            honorifics = self._detect_honorifics(tokens)
+            structure = self._analyze_structure(text, tokens)
+
             analysis = {
-                'tokens': self._extract_token_info(tokens),
-                'sentences': self._detect_sentences(text, tokens),
-                'terms': self._identify_terms(tokens),
-                'grammar': self._analyze_grammar(tokens),
-                'honorifics': self._detect_honorifics(tokens),
-                'structure': self._analyze_structure(text, tokens)
+                'tokens': token_info,
+                'sentences': sentences,
+                'terms': terms,
+                'grammar': grammar,
+                'honorifics': honorifics,
+                'structure': structure
             }
 
             return analysis
         except Exception as e:
-            import logging
-            logging.error(f"藏文分析失败: {e}")
+            logger.error(f"藏文分析失败: {e}")
+            import traceback
+            logger.error(f"完整错误追踪:\n{traceback.format_exc()}")
             # 返回基本分析结果
             return {
                 'tokens': [],
                 'sentences': [{'text': text, 'start': 0, 'end': len(text), 'type': 'unknown'}],
                 'error': str(e)
             }
+
+    def _identify_terms(self, tokens) -> List[Dict]:
+        """
+        从分词结果中识别术语并转换为字典格式
+        """
+        terms = []
+        i = 0
+
+        while i < len(tokens):
+            # 检查多词术语
+            term_info = self._check_multiword_term(tokens, i)
+            if term_info:
+                terms.append(term_info)
+                i += term_info['length']
+            else:
+                # 检查单词术语
+                if self._is_term(tokens[i]):
+                    # 将Token对象转换为字典
+                    term_dict = {
+                        'text': getattr(tokens[i], 'text', ''),
+                        'start': getattr(tokens[i], 'start', 0),
+                        'end': getattr(tokens[i], 'start', 0) + len(getattr(tokens[i], 'text', '')),
+                        'length': len(getattr(tokens[i], 'text', '')),
+                        'type': getattr(tokens[i], 'pos', 'general'),
+                        'pos': getattr(tokens[i], 'pos', None)
+                    }
+                    terms.append(term_dict)
+                i += 1
+
+        return terms
+
+    def _is_term(self, token) -> bool:
+        """
+        判断一个词元是否为术语
+        """
+        if not token:
+            return False
+
+        text = getattr(token, 'text', '')
+        pos = getattr(token, 'pos', '')
+
+        # 词性为名词、专有名词等的通常可能是术语
+        is_noun = pos in ['NOUN', 'PROPN', 'N', 'n.']
+
+        # 长度超过1的词更可能是术语
+        is_long_enough = len(text) > 1
+
+        # 不是标点符号
+        is_not_punct = pos != 'PUNCT' and not (text in '།།། ་')
+
+        # 检查是否为佛教术语
+        is_buddhist_term = self._is_buddhist_term(token)
+
+        return (is_noun and is_long_enough and is_not_punct) or is_buddhist_term
 
     def _extract_token_info(self, tokens) -> List[Dict]:
         """提取词元信息"""
@@ -312,12 +377,6 @@ class BotokAnalyzer:
             # 是否判定为边界
             is_boundary = confidence >= 0.7  # 阈值可调整
 
-        # === 否定证据：检查是否在特殊结构中 ===
-        # 1. 检查是否在引号内
-        # 2. 检查是否在列表项中
-        # 3. 检查是否在从句中
-        # (这些需要更复杂的追踪机制)
-
         return is_boundary, confidence
 
     def _classify_sentence(self, tokens) -> str:
@@ -343,31 +402,6 @@ class BotokAnalyzer:
 
         return 'declarative'  # 默认为陈述句
 
-    def _identify_terms(self, tokens) -> List[Dict]:
-        """识别专业术语（特别是佛教术语）"""
-        terms = []
-        i = 0
-
-        while i < len(tokens):
-            # 检查多词术语
-            term_info = self._check_multiword_term(tokens, i)
-            if term_info:
-                terms.append(term_info)
-                i += term_info['length']
-            else:
-                # 检查单词术语
-                if self._is_buddhist_term(tokens[i]):
-                    terms.append({
-                        'text': tokens[i].text,
-                        'start': i,
-                        'length': 1,
-                        'type': 'buddhist',
-                        'confidence': 0.9
-                    })
-                i += 1
-
-        return terms
-
     def _check_multiword_term(self, tokens, start_idx) -> Optional[Dict]:
         """检查多词术语"""
         # 最多检查4个词的组合
@@ -380,15 +414,15 @@ class BotokAnalyzer:
             if self._is_known_term(phrase):
                 return {
                     'text': phrase,
-                    'start': start_idx,
+                    'start': tokens[start_idx].start if hasattr(tokens[start_idx], 'start') else start_idx,
+                    'end': tokens[start_idx + length - 1].end if hasattr(tokens[start_idx + length - 1], 'end') else (
+                                start_idx + length),
                     'length': length,
                     'type': 'buddhist',
                     'confidence': 0.95
                 }
 
         return None
-
-
 
     def _is_buddhist_term(self, token) -> bool:
         """判断是否为佛教术语"""
@@ -401,13 +435,12 @@ class BotokAnalyzer:
         return token.text in buddhist_keywords or \
             (hasattr(token, 'pos') and token.pos == 'PROPN')
 
-
     def _analyze_grammar(self, tokens) -> Dict:
         """分析语法信息"""
         grammar = {
             'case_particles': [],
             'tense': None,
-            'tense_markers': [],  # 新增：记录所有时态标记
+            'tense_markers': [],  # 记录所有时态标记
             'syntactic_roles': [],
             'clause_structure': []
         }
@@ -807,10 +840,9 @@ class BotokAnalyzer:
 
     def _simple_syllable_count(self, text: str) -> int:
         """简单的音节计数方法（作为备选）"""
-        # 原有的计数逻辑
-        vowel_marks = ['ི', 'ུ', 'ེ', 'ོ']
-        consonants = ['ག', 'ང', 'ད', 'ན', 'བ', 'མ', 'འ', 'ར', 'ལ', 'ས']
-        # 其余代码保持不变...
+        # 藏文中，音节通常由辅音加元音标记组成
+        # 使用"་"（音节分隔符）来估计音节数
+        return len(text.split('་')) - 1 if '་' in text else 1
 
     def _get_line_ending(self, line: str) -> str:
         """获取行末的韵脚（通常是最后一个音节）"""
@@ -900,102 +932,6 @@ class BotokAnalyzer:
     def get_grammatical_info_for_translation(self, text: str) -> Dict:
         """
         提取用于翻译的语法信息
-
-        Args:
-            text: 原始藏文文本
-
-        Returns:
-            适合传递给翻译器和后处理器的格式化信息
-        """
-        # 获取完整分析
-        analysis = self.analyze(text)
-
-        # 创建专为翻译设计的简化信息结构
-        translation_info = {
-            'original_text': text,
-            'sentences': [],
-            'terms': analysis['terms'],
-            'structure_type': 'prose'  # 默认为散文
-        }
-
-        # 检查整体结构类型
-        if analysis['structure']['is_verse']:
-            translation_info['structure_type'] = 'verse'
-        elif analysis['structure']['has_enumeration']:
-            translation_info['structure_type'] = 'enumeration'
-
-        # 处理每个句子的信息
-        for sentence in analysis['sentences']:
-            # 基本句子信息
-            sentence_info = {
-                'text': sentence['text'],
-                'start': sentence['start'],
-                'end': sentence['end'],
-                'type': sentence['type'],
-                'grammatical_analysis': {
-                    'case_particles': [],
-                    'tense': None,
-                    'syntactic_roles': []
-                }
-            }
-
-            # 提取此句的语法信息
-            self._extract_sentence_grammar(sentence, analysis, sentence_info)
-
-            # 添加到结果中
-            translation_info['sentences'].append(sentence_info)
-
-        return translation_info
-
-    def _extract_sentence_grammar(self, sentence, full_analysis, sentence_info):
-        """
-        提取单个句子的语法信息
-
-        Args:
-            sentence: 句子信息
-            full_analysis: 完整分析结果
-            sentence_info: 要填充的句子信息对象
-        """
-        # 获取句子的起止位置
-        start_pos = sentence['start']
-        end_pos = sentence['end']
-
-        # 提取格助词信息
-        for particle in full_analysis['grammar']['case_particles']:
-            token_pos = self._get_token_position(particle['position'], full_analysis['tokens'])
-            # 检查助词是否在当前句子范围内
-            if start_pos <= token_pos < end_pos:
-                # 复制并添加相对位置信息
-                particle_info = particle.copy()
-                particle_info['relative_position'] = token_pos - start_pos
-                sentence_info['grammatical_analysis']['case_particles'].append(particle_info)
-
-        # 提取时态信息
-        for marker in full_analysis['grammar']['tense_markers']:
-            token_pos = self._get_token_position(marker['position'], full_analysis['tokens'])
-            if start_pos <= token_pos < end_pos:
-                # 设置句子的主要时态
-                sentence_info['grammatical_analysis']['tense'] = marker['tense']
-                break
-
-        # 提取句法角色
-        for role in full_analysis['grammar']['syntactic_roles']:
-            token_pos = self._get_token_position(role['position'], full_analysis['tokens'])
-            if start_pos <= token_pos < end_pos:
-                # 复制并添加相对位置
-                role_info = role.copy()
-                role_info['relative_position'] = token_pos - start_pos
-                sentence_info['grammatical_analysis']['syntactic_roles'].append(role_info)
-
-    def _get_token_position(self, token_index, tokens):
-        """获取词元在原文中的实际字符位置"""
-        if token_index < len(tokens):
-            return tokens[token_index].get('start', 0)
-        return 0
-
-    def get_grammatical_info_for_translation(self, text: str) -> Dict:
-        """
-        提取用于翻译的语法信息，格式化为适合传递给翻译模块和后处理模块的结构
 
         Args:
             text: 原始藏文文本
@@ -1144,67 +1080,117 @@ class BotokAnalyzer:
 
     def _extract_sentence_grammar(self, sentence, full_analysis, sentence_info):
         """提取单个句子的语法信息"""
-        # 获取句子范围
-        start_pos = sentence.get('start', 0)
-        end_pos = sentence.get('end', 0)
+        # 获取句子范围 - 添加安全访问
+        start_pos = self._safe_get(sentence, 'start', 0)
+        end_pos = self._safe_get(sentence, 'end', 0)
 
-        # 从全局语法分析中提取该句的信息
-        grammar = full_analysis.get('grammar', {})
+        # 从全局语法分析中提取该句的信息 - 添加安全访问
+        grammar = self._safe_get(full_analysis, 'grammar', {})
 
         # 1. 提取格助词信息
-        for particle in grammar.get('case_particles', []):
-            token_pos = particle.get('position', 0)
-            # 计算实际字符位置
-            char_pos = self._get_token_position(token_pos, full_analysis.get('tokens', []))
+        for particle in self._safe_get(grammar, 'case_particles', []):
+            try:
+                token_pos = self._safe_get(particle, 'position', 0)
+                # 计算实际字符位置
+                char_pos = self._get_token_position(token_pos, self._safe_get(full_analysis, 'tokens', []))
 
-            # 检查是否在当前句子范围内
-            if start_pos <= char_pos < end_pos:
-                # 复制并添加相对位置信息
-                particle_info = particle.copy()
-                particle_info['relative_position'] = char_pos - start_pos
-                sentence_info['grammatical_analysis']['case_particles'].append(particle_info)
+                # 检查是否在当前句子范围内
+                if start_pos <= char_pos < end_pos:
+                    # 复制并添加相对位置信息 - 添加安全复制
+                    particle_info = self._safe_copy(particle)
+                    particle_info['relative_position'] = char_pos - start_pos
+                    sentence_info['grammatical_analysis']['case_particles'].append(particle_info)
+            except Exception as e:
+                logger.warning(f"处理格助词时出错: {e}")
 
         # 2. 提取时态信息
-        for marker in grammar.get('tense_markers', []):
-            token_pos = marker.get('position', 0)
-            char_pos = self._get_token_position(token_pos, full_analysis.get('tokens', []))
+        for marker in self._safe_get(grammar, 'tense_markers', []):
+            try:
+                token_pos = self._safe_get(marker, 'position', 0)
+                char_pos = self._get_token_position(token_pos, self._safe_get(full_analysis, 'tokens', []))
 
-            if start_pos <= char_pos < end_pos:
-                # 设置句子主要时态
-                sentence_info['grammatical_analysis']['tense'] = marker.get('tense')
-                break
+                if start_pos <= char_pos < end_pos:
+                    # 设置句子主要时态
+                    sentence_info['grammatical_analysis']['tense'] = self._safe_get(marker, 'tense')
+                    break
+            except Exception as e:
+                logger.warning(f"处理时态标记时出错: {e}")
 
         # 3. 提取语态信息
-        sentence_info['grammatical_analysis']['voice'] = self._detect_sentence_voice(
-            sentence, full_analysis, start_pos, end_pos
-        )
+        try:
+            sentence_info['grammatical_analysis']['voice'] = self._detect_sentence_voice(
+                sentence, full_analysis, start_pos, end_pos
+            )
+        except Exception as e:
+            logger.warning(f"检测语态时出错: {e}")
+            sentence_info['grammatical_analysis']['voice'] = 'active'  # 默认值
 
         # 4. 提取句法角色
-        for role in grammar.get('syntactic_roles', []):
-            token_pos = role.get('position', 0)
-            char_pos = self._get_token_position(token_pos, full_analysis.get('tokens', []))
+        for role in self._safe_get(grammar, 'syntactic_roles', []):
+            try:
+                token_pos = self._safe_get(role, 'position', 0)
+                char_pos = self._get_token_position(token_pos, self._safe_get(full_analysis, 'tokens', []))
 
-            if start_pos <= char_pos < end_pos:
-                # 复制并添加相对位置
-                role_info = role.copy()
-                role_info['relative_position'] = char_pos - start_pos
-                sentence_info['grammatical_analysis']['syntactic_roles'].append(role_info)
+                if start_pos <= char_pos < end_pos:
+                    # 复制并添加相对位置
+                    role_info = self._safe_copy(role)
+                    role_info['relative_position'] = char_pos - start_pos
+                    sentence_info['grammatical_analysis']['syntactic_roles'].append(role_info)
+            except Exception as e:
+                logger.warning(f"处理句法角色时出错: {e}")
 
     def _detect_sentence_voice(self, sentence, full_analysis, start_pos, end_pos):
         """检测句子的语态"""
-        grammar = full_analysis.get('grammar', {})
+        grammar = self._safe_get(full_analysis, 'grammar', {})
 
         # 检查被动标记
-        for particle in grammar.get('case_particles', []):
-            token_pos = particle.get('position', 0)
-            char_pos = self._get_token_position(token_pos, full_analysis.get('tokens', []))
+        for particle in self._safe_get(grammar, 'case_particles', []):
+            token_pos = self._safe_get(particle, 'position', 0)
+            char_pos = self._get_token_position(token_pos, self._safe_get(full_analysis, 'tokens', []))
 
             if start_pos <= char_pos < end_pos:
-                if particle.get('type') == 'instrumental' and particle.get('usage') == 'agent':
+                if self._safe_get(particle, 'type') == 'instrumental' and self._safe_get(particle, 'usage') == 'agent':
                     return 'passive'
 
         # 默认为主动语态
         return 'active'
 
+    def _get_token_position(self, token_index, tokens):
+        """获取词元在原文中的实际字符位置"""
+        if token_index < len(tokens):
+            return self._safe_get(tokens[token_index], 'start', 0)
+        return 0
 
+    def _safe_get(self, obj: Any, key: str, default=None) -> Any:
+        """安全获取属性或键值，支持对象和字典"""
+        if obj is None:
+            return default
 
+        # 尝试字典访问
+        if hasattr(obj, 'get'):
+            return obj.get(key, default)
+
+        # 尝试属性访问
+        if hasattr(obj, key):
+            return getattr(obj, key)
+
+        # 尝试索引访问
+        try:
+            return obj[key]
+        except (TypeError, KeyError, IndexError):
+            return default
+
+    def _safe_copy(self, obj):
+        """安全复制对象，支持字典和对象"""
+        if hasattr(obj, 'copy'):
+            return obj.copy()
+        elif hasattr(obj, '__dict__'):
+            # 如果是对象，复制其__dict__
+            return obj.__dict__.copy()
+        else:
+            # 简单的字典转换
+            try:
+                return dict(obj)
+            except (TypeError, ValueError):
+                # 最后的退路：创建新字典
+                return {}

@@ -4,7 +4,7 @@
 import re
 import logging
 import math
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from preprocessor import BotokAnalyzer, TermProtector, ContextExtractor
 from postprocessor import TermRestorer, GrammarCorrector, QualityController, TextFinalizer
 from .nllb_wrapper import NLLBTranslator
@@ -14,8 +14,9 @@ from postprocessor.adapter import ProcessingAdapter
 
 logger = logging.getLogger(__name__)
 
-
 class TranslationManager:
+    """翻译管理器类 - 负责协调整个翻译流程"""
+
     def __init__(self, config: Optional[Dict] = None):
         """初始化翻译管理器"""
         # 保存配置
@@ -31,7 +32,7 @@ class TranslationManager:
 
         # 初始化预处理组件
         self.botok_analyzer = BotokAnalyzer()
-        self.term_protector = TermProtector(self.term_database)  # 传递数据库 self.term_protector = TermProtector(self.term_database)
+        self.term_protector = TermProtector(self.term_database)
         self.context_extractor = ContextExtractor()
         self.context_detector = FlexibleContextDetector()
 
@@ -39,24 +40,21 @@ class TranslationManager:
         self.translator = NLLBTranslator()
 
         # 初始化后处理组件
-        self.term_restorer = TermRestorer()
+        self.term_restorer = TermRestorer(self.term_database)
         self.grammar_corrector = GrammarCorrector()
-        self.quality_controller = QualityController()
+        self.quality_controller = QualityController(self.term_database)
         self.text_finalizer = TextFinalizer()
-
 
         # 将数据库连接传递给需要的组件
         self._setup_database_connections()
 
         logger.info("Translation Manager initialized")
 
-
     def _setup_database_connections(self):
         """设置各组件的数据库连接"""
         # 为需要数据库的组件设置连接
         components_need_db = [
-            self.term_protector,  # 假设TermProtector需要数据库
-            self.term_restorer,
+            self.term_protector,
             self.quality_controller
         ]
 
@@ -127,46 +125,70 @@ class TranslationManager:
                 'quality_score': 0.0
             }
 
-    # 在 translation_manager.py 的 _preprocess 方法中修改
     def _preprocess(self, text: str) -> Dict:
         """预处理阶段"""
-        # 1. 规范化文本
-        normalized_text = TextUtils.normalize_tibetan(text)
+        try:
+            # 1. 规范化文本
+            normalized_text = TextUtils.normalize_tibetan(text)
 
-        # 2. Botok分析
-        botok_analysis = self.botok_analyzer.analyze(normalized_text)
-        botok_analysis['original_text'] = normalized_text
+            # 2. Botok分析
+            botok_analysis = self.botok_analyzer.analyze(normalized_text)
+            botok_analysis['original_text'] = normalized_text
 
-        # 3. 提取语法信息 (新增)
-        grammar_info = self.botok_analyzer.get_grammatical_info_for_translation(normalized_text)
+            # 3. 提取语法信息
+            grammar_info = self.botok_analyzer.get_grammatical_info_for_translation(normalized_text)
 
-        # 4. 术语保护
-        identified_terms = botok_analysis.get('terms', [])
-        protected_text, protection_map = self.term_protector.protect_terms(
-            normalized_text, identified_terms
-        )
+            # 4. 术语保护
+            identified_terms = botok_analysis.get('terms', [])
 
-        # 5. 提取上下文
-        context = self.context_extractor.extract_context(
-            botok_analysis, protection_map
-        )
+            # 转换Token对象为字典（如果需要）
+            converted_terms = []
+            for term in identified_terms:
+                if hasattr(term, '__dict__'):
+                    # 如果是Token对象，转换为字典
+                    term_dict = {
+                        'text': getattr(term, 'text', ''),
+                        'start': getattr(term, 'start', 0),
+                        'end': getattr(term, 'end', 0),
+                        'length': len(getattr(term, 'text', '')),
+                        'type': getattr(term, 'pos', 'general'),
+                        'pos': getattr(term, 'pos', None)
+                    }
+                    converted_terms.append(term_dict)
+                else:
+                    # 如果已经是字典，直接使用
+                    converted_terms.append(term)
 
-        # 6. 佛教语境检测
-        context_analysis = self.context_detector.detect(normalized_text)
+            protected_text, protection_map = self.term_protector.protect_terms(
+                normalized_text, converted_terms
+            )
 
-        # 7. 将语法信息添加到上下文 (新增)
-        context.grammatical_info = grammar_info
+            # 5. 提取上下文
+            context = self.context_extractor.extract_context(
+                botok_analysis, protection_map
+            )
 
-        # 8. 丰富上下文信息
-        context.buddhist_context = context_analysis.get('primary_context', 'GENERAL')
-        context.context_confidence = context_analysis.get('context_confidence', 0.0)
-        context.function_type = context_analysis.get('primary_function', 'GENERAL_TERM')
+            # 6. 佛教语境检测
+            context_analysis = self.context_detector.detect(normalized_text)
 
-        return {
-            'protected_text': protected_text,
-            'context': context,
-            'botok_analysis': botok_analysis
-        }
+            # 7. 将语法信息添加到上下文
+            context.grammatical_info = grammar_info
+
+            # 8. 丰富上下文信息
+            context.buddhist_context = context_analysis.get('primary_context', 'GENERAL')
+            context.context_confidence = context_analysis.get('context_confidence', 0.0)
+            context.function_type = context_analysis.get('primary_function', 'GENERAL_TERM')
+
+            return {
+                'protected_text': protected_text,
+                'context': context,
+                'botok_analysis': botok_analysis
+            }
+        except Exception as e:
+            logger.error(f"Error in _preprocess: {str(e)}")
+            import traceback
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            raise
 
     def _translate_core(self, protected_text: str, context) -> str:
         """核心翻译阶段"""
@@ -175,7 +197,7 @@ class TranslationManager:
             return self._translate_by_sentences(protected_text, context)
         else:
             # 直接翻译整段
-            return self.nllb_translator.translate(protected_text)
+            return self.translator.translate(protected_text)
 
     def _should_split_sentences(self, text: str, context) -> bool:
         """判断是否需要分句翻译"""
@@ -198,9 +220,9 @@ class TranslationManager:
 
         # 批量翻译
         if len(sentences) > 1:
-            sentence_translations = self.nllb_translator.translate_batch(sentences)
+            sentence_translations = self.translator.translate_batch(sentences)
         else:
-            sentence_translations = [self.nllb_translator.translate(sentences[0])]
+            sentence_translations = [self.translator.translate(sentences[0])]
 
         # 合并翻译结果
         for i, trans in enumerate(sentence_translations):
@@ -293,7 +315,6 @@ class TranslationManager:
         Returns:
             质量得分 (0.0-1.0)
         """
-
         scores = []
 
         # 1. 术语覆盖率
@@ -324,7 +345,19 @@ class TranslationManager:
         return min(total_score, 1.0)
 
     def _calculate_term_coverage(self, translation: str, term_mappings: Dict) -> float:
-        """计算术语覆盖率"""
+        """
+        计算术语覆盖率
+
+        Args:
+            translation: 翻译文本
+            term_mappings: 术语映射字典
+
+        Returns:
+            覆盖率得分 (0.0-1.0)
+        """
+        if not term_mappings:
+            return 1.0  # 没有术语需要覆盖
+
         # 统计应该出现的术语数量
         expected_terms = set()
 
@@ -343,13 +376,21 @@ class TranslationManager:
 
         # 计算覆盖率
         if not expected_terms:
-            return 1.0  # 没有术语需要覆盖
+            return 1.0
 
         return found_terms / len(expected_terms)
 
     def _calculate_sentence_completeness(self, translation: str, context) -> float:
-        """计算句子完整性"""
+        """
+        计算句子完整性得分
 
+        Args:
+            translation: 翻译文本
+            context: 上下文信息
+
+        Returns:
+            完整性得分 (0.0-1.0)
+        """
         # 获取原始句子数量
         original_sentences = ProcessingAdapter.extract_info_from_context(
             context, 'sentences', []
@@ -380,57 +421,104 @@ class TranslationManager:
         else:
             expected_sentences = len(original_sentences)
 
-        completeness_ratio = complete_sentences / expected_sentences
+        completeness_ratio = complete_sentences / max(1, expected_sentences)
 
-        return min(1.0, completeness_ratio)
+        # 检查是否有未完成的句子
+        incomplete_patterns = [
+            r'。{2,}',  # 多个句号
+            r'[^。，、！？；：""''【】《》（）\s]\s*$',  # 句尾没有标点
+            r'^[，、]',  # 以逗号开头
+            r'[，、]{2,}',  # 连续的逗号
+        ]
+
+        penalty = 0
+        for pattern in incomplete_patterns:
+            if re.search(pattern, translation):
+                penalty += 0.1
+
+        # 检查句子数量是否合理
+        if original_sentences:
+            source_sentence_count = len(original_sentences)
+            trans_sentence_count = len(re.findall(r'[。！？]', translation))
+
+            ratio = trans_sentence_count / source_sentence_count
+            if 0.5 <= ratio <= 2.0:
+                sentence_ratio_score = 1.0
+            else:
+                sentence_ratio_score = max(0, 1.0 - abs(ratio - 1.0) * 0.5)
+
+            completeness_ratio = (completeness_ratio + sentence_ratio_score) / 2
+
+        return max(0, min(1.0, completeness_ratio - penalty))
 
     def _calculate_grammar_score(self, translation: str, context) -> float:
-        """计算语法正确性得分"""
+        """
+        计算语法正确性得分
+
+        Args:
+            translation: 翻译文本
+            context: 上下文信息
+
+        Returns:
+            语法得分 (0.0-1.0)
+        """
+        score = 1.0
+
         # 检查常见语法错误
-        grammar_issues = 0
+        grammar_errors = [
+            (r'的的', 0.1),  # 重复的"的"
+            (r'在在', 0.1),  # 重复的"在"
+            (r'是是', 0.1),  # 重复的"是"
+            (r'[他她它]们们', 0.1),  # 重复的"们"
+            (r'把[^把]{0,10}把', 0.15),  # 连续的"把"字句
+            (r'被[^被]{0,10}被', 0.15),  # 连续的"被"字句
+        ]
 
-        # 1. 检查主谓搭配问题
+        for pattern, penalty in grammar_errors:
+            if re.search(pattern, translation):
+                score -= penalty
+
+        # 检查主谓搭配问题
         subject_verb_errors = self._check_subject_verb_errors(translation)
-        grammar_issues += subject_verb_errors
+        score -= subject_verb_errors * 0.05
 
-        # 2. 检查量词使用问题
+        # 检查量词使用问题
         measure_word_errors = self._check_measure_word_errors(translation)
-        grammar_issues += measure_word_errors
+        score -= measure_word_errors * 0.05
 
-        # 3. 检查成分缺失问题
+        # 检查成分缺失问题
         missing_component_errors = self._check_missing_components(translation)
-        grammar_issues += missing_component_errors
+        score -= missing_component_errors * 0.05
 
-        # 4. 检查虚词使用问题
+        # 检查虚词使用问题
         function_word_errors = self._check_function_word_errors(translation)
-        grammar_issues += function_word_errors
+        score -= function_word_errors * 0.05
 
-        # 计算得分：错误越多，分数越低
-        sentences = re.split(r'[。！？]', translation)
-        sentences = [s.strip() for s in sentences if s.strip()]
+        # 检查主谓宾结构完整性
+        if hasattr(context, 'grammatical_analyses') and context.grammatical_analyses:
+            for analysis in context.grammatical_analyses:
+                if analysis.get('syntactic_roles'):
+                    # 检查是否有孤立的语法成分
+                    roles = [r['role'] for r in analysis['syntactic_roles']]
+                    if 'agent' in roles and 'patient' not in roles:
+                        score -= 0.05  # 有施事无受事
+                    if 'patient' in roles and 'agent' not in roles:
+                        score -= 0.05  # 有受事无施事
 
-        if not sentences:
-            return 0.0
-
-        # 平均每句话的错误数
-        error_per_sentence = grammar_issues / len(sentences)
-
-        # 错误率转换为得分（指数衰减）
-        grammar_score = math.exp(-error_per_sentence)
-
-        return grammar_score
+        return max(0, score)
 
     def _check_subject_verb_errors(self, text: str) -> int:
         """检查主谓搭配错误"""
         errors = 0
 
         # 简化实现：检查一些常见的错误搭配
+        # 添加捕获组以防止将来出现"no such group"错误
         error_patterns = [
-            r'我们.{0,5}是.{0,5}去',
-            r'他们.{0,5}是.{0,5}有',
-            r'佛陀.{0,5}我.{0,5}说',
-            r'菩萨.{0,5}你.{0,5}修',
-            r'经中.{0,5}他.{0,5}讲'
+            r'(我们).{0,5}(是).{0,5}(去)',
+            r'(他们).{0,5}(是).{0,5}(有)',
+            r'(佛陀).{0,5}(我).{0,5}(说)',
+            r'(菩萨).{0,5}(你).{0,5}(修)',
+            r'(经中).{0,5}(他).{0,5}(讲)'
         ]
 
         for pattern in error_patterns:
@@ -445,7 +533,7 @@ class TranslationManager:
 
         # 检查数量词后缺少量词的情况
         error_patterns = [
-            r'[一二三四五六七八九十百千万亿两]([\u4e00-\u9fff])',
+            r'([一二三四五六七八九十百千万亿两])([\u4e00-\u9fff])',
             r'(\d+)([\u4e00-\u9fff])'
         ]
 
@@ -506,26 +594,60 @@ class TranslationManager:
         return errors
 
     def _calculate_fluency_score(self, translation: str) -> float:
-        """计算流畅度得分"""
-        # 1. 检查冗余重复
+        """
+        计算流畅度得分
+
+        Args:
+            translation: 翻译文本
+
+        Returns:
+            流畅度得分 (0.0-1.0)
+        """
+        score = 1.0
+
+        # 检查不流畅的模式
+        disfluency_patterns = [
+            (r'(\S)\1{3,}', 0.2),  # 字符重复3次以上
+            (r'[，。]\s*[，。]', 0.1),  # 标点符号连续
+            (r'\s{2,}', 0.05),  # 多个空格
+            (r'[一二三四五六七八九十]\s+[一二三四五六七八九十]', 0.1),  # 数字断开
+        ]
+
+        for pattern, penalty in disfluency_patterns:
+            matches = re.findall(pattern, translation)
+            score -= penalty * len(matches)
+
+        # 检查句子长度分布
+        sentences = re.split(r'[。！？]', translation)
+        sentences = [s.strip() for s in sentences if s.strip()]
+
+        if sentences:
+            lengths = [len(s) for s in sentences]
+            avg_length = sum(lengths) / len(lengths)
+
+            # 理想的中文句子长度在15-30字之间
+            if 15 <= avg_length <= 30:
+                length_score = 1.0
+            elif avg_length < 10 or avg_length > 50:
+                length_score = 0.7
+            else:
+                length_score = 0.85
+
+            score *= length_score
+
+        # 检查冗余重复
         repetition_issues = self._check_repetition(translation)
+        score -= repetition_issues * 0.05
 
-        # 2. 检查生硬表达
+        # 检查生硬表达
         awkward_expressions = self._check_awkward_expressions(translation)
+        score -= awkward_expressions * 0.05
 
-        # 3. 检查连贯性
+        # 检查连贯性
         coherence_issues = self._check_coherence(translation)
+        score -= coherence_issues * 0.05
 
-        # 总问题数
-        total_issues = repetition_issues + awkward_expressions + coherence_issues
-
-        # 根据文本长度归一化
-        normalized_issues = total_issues / (len(translation) / 100)  # 每100字的问题数
-
-        # 转换为得分（指数衰减）
-        fluency_score = math.exp(-normalized_issues * 0.5)
-
-        return fluency_score
+        return max(0, score)
 
     def _check_repetition(self, text: str) -> int:
         """检查冗余重复"""
@@ -605,20 +727,32 @@ class TranslationManager:
         return issues
 
     def _calculate_length_ratio_score(self, source: str, translation: str) -> float:
-        """计算长度比例合理性得分"""
-        # 藏文和中文的理想字符比例范围
-        # 通常藏文翻译成中文后，长度会减少
+        """
+        计算长度比例合理性得分
+
+        Args:
+            source: 源文本
+            translation: 翻译文本
+
+        Returns:
+            长度比例得分 (0.0-1.0)
+        """
+        # 藏文到中文的合理长度比例范围
         min_ratio = 0.5  # 翻译长度至少应为原文的50%
         max_ratio = 1.2  # 翻译长度最多为原文的120%
 
-        # 计算长度比例
-        source_length = len(source)
-        translation_length = len(translation)
+        # 空值处理
+        if not source or not translation:
+            return 0.0
 
-        if source_length == 0:
-            return 1.0
+        # 计算字符比例（不计空格）
+        source_len = len(source.replace(' ', ''))
+        trans_len = len(translation.replace(' ', ''))
 
-        actual_ratio = translation_length / source_length
+        if source_len == 0:
+            return 0.0
+
+        actual_ratio = trans_len / source_len
 
         # 如果比例在理想范围内，得分为1.0
         if min_ratio <= actual_ratio <= max_ratio:
@@ -632,145 +766,16 @@ class TranslationManager:
             # 太长
             return max_ratio / actual_ratio
 
-    def _calculate_term_coverage(self, translation: str, term_mappings: Dict) -> float:
-        """计算术语覆盖率"""
-        if not term_mappings:
-            return 1.0
-
-        found_terms = 0
-        for placeholder, term_info in term_mappings.items():
-            chinese_term = term_info.get('chinese', '')
-            if chinese_term and chinese_term in translation:
-                found_terms += 1
-
-        return found_terms / len(term_mappings)
-
-    def _calculate_sentence_completeness(self, translation: str, context) -> float:
-        """计算句子完整性得分"""
-        # 检查是否有未完成的句子
-        incomplete_patterns = [
-            r'。{2,}',  # 多个句号
-            r'[^。，、！？；：""''【】《》（）\s]\s*$',  # 句尾没有标点
-            r'^[，、]',  # 以逗号开头
-            r'[，、]{2,}',  # 连续的逗号
-        ]
-
-        penalty = 0
-        for pattern in incomplete_patterns:
-            if re.search(pattern, translation):
-                penalty += 0.1
-
-        # 检查句子数量是否合理
-        source_sentence_count = len(context.sentences)
-        trans_sentence_count = len(re.findall(r'[。！？]', translation))
-
-        if source_sentence_count > 0:
-            ratio = trans_sentence_count / source_sentence_count
-            if 0.5 <= ratio <= 2.0:
-                sentence_ratio_score = 1.0
-            else:
-                sentence_ratio_score = max(0, 1.0 - abs(ratio - 1.0) * 0.5)
-        else:
-            sentence_ratio_score = 1.0
-
-        return max(0, min(1.0, sentence_ratio_score - penalty))
-
-    def _calculate_grammar_score(self, translation: str, context) -> float:
-        """计算语法正确性得分"""
-        score = 1.0
-
-        # 检查常见语法错误
-        grammar_errors = [
-            (r'的的', 0.1),  # 重复的"的"
-            (r'了了', 0.1),  # 重复的"了"
-            (r'在在', 0.1),  # 重复的"在"
-            (r'是是', 0.1),  # 重复的"是"
-            (r'[他她它]们们', 0.1),  # 重复的"们"
-            (r'把[^把]{0,10}把', 0.15),  # 连续的"把"字句
-            (r'被[^被]{0,10}被', 0.15),  # 连续的"被"字句
-        ]
-
-        for pattern, penalty in grammar_errors:
-            if re.search(pattern, translation):
-                score -= penalty
-
-        # 检查主谓宾结构完整性
-        if context.grammatical_analyses:
-            for analysis in context.grammatical_analyses:
-                if analysis.get('syntactic_roles'):
-                    # 检查是否有孤立的语法成分
-                    roles = [r['role'] for r in analysis['syntactic_roles']]
-                    if 'agent' in roles and 'patient' not in roles:
-                        score -= 0.05  # 有施事无受事
-                    if 'patient' in roles and 'agent' not in roles:
-                        score -= 0.05  # 有受事无施事
-
-        return max(0, score)
-
-    def _calculate_fluency_score(self, translation: str) -> float:
-        """计算流畅度得分"""
-        score = 1.0
-
-        # 检查不流畅的模式
-        disfluency_patterns = [
-            (r'(\S)\1{3,}', 0.2),  # 字符重复3次以上
-            (r'[，。]\s*[，。]', 0.1),  # 标点符号连续
-            (r'\s{2,}', 0.05),  # 多个空格
-            (r'[一二三四五六七八九十]\s+[一二三四五六七八九十]', 0.1),  # 数字断开
-        ]
-
-        for pattern, penalty in disfluency_patterns:
-            matches = re.findall(pattern, translation)
-            score -= penalty * len(matches)
-
-        # 检查句子长度分布
-        sentences = re.split(r'[。！？]', translation)
-        sentences = [s.strip() for s in sentences if s.strip()]
-
-        if sentences:
-            lengths = [len(s) for s in sentences]
-            avg_length = sum(lengths) / len(lengths)
-
-            # 理想的中文句子长度在15-30字之间
-            if 15 <= avg_length <= 30:
-                length_score = 1.0
-            elif avg_length < 10 or avg_length > 50:
-                length_score = 0.7
-            else:
-                length_score = 0.85
-
-            score *= length_score
-
-        return max(0, score)
-
-    def _calculate_length_ratio_score(self, source: str, translation: str) -> float:
-        """计算长度比例得分"""
-        # 藏文到中文的合理长度比例通常在0.6-1.2之间
-        if not source or not translation:
-            return 0.0
-
-        # 计算字符比例（不计空格）
-        source_len = len(source.replace(' ', ''))
-        trans_len = len(translation.replace(' ', ''))
-
-        if source_len == 0:
-            return 0.0
-
-        ratio = trans_len / source_len
-
-        # 理想比例范围
-        if 0.6 <= ratio <= 1.2:
-            return 1.0
-        elif 0.4 <= ratio <= 1.5:
-            return 0.8
-        elif 0.3 <= ratio <= 2.0:
-            return 0.6
-        else:
-            return 0.4
-
     def translate_document(self, document: str, progress_callback=None) -> Dict:
         """
         翻译长文档，支持进度回调
+
+        Args:
+            document: 要翻译的文档
+            progress_callback: 进度回调函数
+
+        Returns:
+            包含翻译结果和元数据的字典
         """
         # 分段处理长文档
         paragraphs = self._split_document(document)
@@ -803,7 +808,15 @@ class TranslationManager:
         }
 
     def _split_document(self, document: str) -> List[str]:
-        """智能分割文档"""
+        """
+        智能分割文档
+
+        Args:
+            document: 要分割的文档
+
+        Returns:
+            段落列表
+        """
         # 首先尝试按段落分割（双换行）
         paragraphs = re.split(r'\n\s*\n', document)
 

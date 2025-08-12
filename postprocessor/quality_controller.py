@@ -1,8 +1,8 @@
 """
-质量控制器 - 完整实现版本
+质量控制器 - 优化和修正翻译质量
 """
 import re
-from typing import Dict, List, Tuple, Optional, Set
+from typing import Dict, List, Tuple, Optional, Set, Any
 import logging
 from collections import defaultdict
 import jieba
@@ -125,7 +125,7 @@ class ConceptGraph:
         """
         添加概念关系到内存缓存
 
-        Parameters:
+        Args:
             relation_type: 关系类型（opposite, includes, related, stage, method_goal）
             concept1: 源概念
             concept2: 目标概念或概念列表
@@ -151,7 +151,7 @@ class ConceptGraph:
         """
         获取概念的特定关系
 
-        Parameters:
+        Args:
             concept: 源概念
             relation_type: 关系类型
 
@@ -164,7 +164,7 @@ class ConceptGraph:
         """
         检查两个概念在特定上下文中的兼容性
 
-        Parameters:
+        Args:
             concept1: 第一个概念
             concept2: 第二个概念
             context: 上下文文本
@@ -284,9 +284,9 @@ class ConceptGraph:
 class SemanticAnalyzer:
     """语义分析器 - 进行深度语义分析"""
 
-    def __init__(self, term_database):
+    def __init__(self, term_database=None):
         self.term_database = term_database
-        self.concept_graph = ConceptGraph()
+        self.concept_graph = ConceptGraph(term_database)
 
         # 初始化分词器，添加佛教词汇
         self._init_jieba()
@@ -445,17 +445,21 @@ class SemanticAnalyzer:
 
 
 class QualityController:
-    def __init__(self, term_database):
+    """质量控制器 - 优化和修正翻译质量"""
+
+    def __init__(self, term_database=None):
         """初始化质量控制器"""
         self.term_database = term_database
         self.semantic_analyzer = SemanticAnalyzer(term_database)
-        self.concept_graph = ConceptGraph()
+        self.concept_graph = ConceptGraph(term_database)
 
         # 动态加载搭配规则
         self.collocation_rules = self._load_collocation_rules()
 
         # 统计信息
         self.correction_stats = defaultdict(int)
+
+        logger.info("质量控制器初始化完成")
 
     def _load_collocation_rules(self) -> Dict:
         """从知识库加载搭配规则"""
@@ -542,7 +546,7 @@ class QualityController:
         """修正语义问题"""
         # 1. 检查概念冲突
         for relation in semantics['relations']:
-            if relation['type'] == 'conflict':
+            if relation.get('type') == 'conflict':
                 sentence = self._resolve_concept_conflict(
                     sentence, relation['concept1'], relation['concept2'], context
                 )
@@ -551,7 +555,7 @@ class QualityController:
         sentence = self._fix_collocations(sentence, semantics)
 
         # 3. 补充缺失成分
-        if not semantics['completeness']['is_complete']:
+        if not semantics['completeness'].get('is_complete', True):
             sentence = self._complete_sentence(sentence, semantics)
 
         return sentence
@@ -587,15 +591,16 @@ class QualityController:
 
     def _analyze_conflict_type(self, sentence: str, concept1: str, concept2: str, context) -> str:
         """分析概念冲突的类型"""
-        from .adapter import ProcessingAdapter
-
         # 获取佛教语境
         buddhist_context = ProcessingAdapter.get_buddhist_context(context)
 
         # 尝试从知识库获取概念信息
         try:
-            concept1_info = self.concept_database.get_concept_info(concept1)
-            concept2_info = self.concept_database.get_concept_info(concept2)
+            concept1_info = {}
+            concept2_info = {}
+            if hasattr(self, 'concept_database'):
+                concept1_info = self.concept_database.get_concept_info(concept1)
+                concept2_info = self.concept_database.get_concept_info(concept2)
         except:
             concept1_info = {}
             concept2_info = {}
@@ -618,29 +623,6 @@ class QualityController:
 
         # 5. 默认为轻微冲突
         return 'minor_conflict'
-
-    def _analyze_conflict(self, sentence: str, concept1: str, concept2: str) -> Dict:
-        """分析概念冲突的严重程度和解决方案"""
-        analysis = {
-            'severity': 'low',
-            'reason': '',
-            'suggested_fix': None
-        }
-
-        # 检查是否为根本性对立
-        if self.concept_graph.get_relation(concept1, 'opposite'):
-            if concept2 in self.concept_graph.get_relation(concept1, 'opposite'):
-                analysis['severity'] = 'high'
-                analysis['reason'] = 'fundamental_opposition'
-
-                # 检查语境，提供修正建议
-                if '同时' in sentence or '既' in sentence:
-                    # 不能同时具有对立属性
-                    analysis['suggested_fix'] = self._suggest_alternative_expression(
-                        sentence, concept1, concept2
-                    )
-
-        return analysis
 
     def _are_concepts_contradictory(self, concept1: str, concept2: str,
                                     concept1_info: Dict, concept2_info: Dict) -> bool:
@@ -956,25 +938,11 @@ class QualityController:
         clarification = '从某种意义上说，'
         return clarification + sentence
 
-    def _suggest_alternative_expression(self, sentence: str, concept1: str,
-                                      concept2: str) -> str:
-        """建议替代表达"""
-        # 这里应该使用更复杂的NLP技术
-        # 现在提供简单的规则
-
-        if concept1 == '轮回' and concept2 == '涅槃':
-            if '同时' in sentence:
-                return sentence.replace('同时', '从...到')
-            elif '既' in sentence:
-                return sentence.replace('既', '超越')
-
-        return sentence
-
     def _fix_collocations(self, sentence: str, semantics: Dict) -> str:
         """修正搭配问题"""
         # 检查主谓搭配
-        for subject in semantics['subjects']:
-            for predicate in semantics['predicates']:
+        for subject in semantics.get('subjects', []):
+            for predicate in semantics.get('predicates', []):
                 if not self._is_valid_collocation('subject_verb', subject, predicate):
                     # 查找更好的搭配
                     better_predicate = self._find_better_collocation(
@@ -984,8 +952,8 @@ class QualityController:
                         sentence = sentence.replace(predicate, better_predicate)
 
         # 检查动宾搭配
-        for verb in semantics['predicates']:
-            for obj in semantics['objects']:
+        for verb in semantics.get('predicates', []):
+            for obj in semantics.get('objects', []):
                 if not self._is_valid_collocation('verb_object', verb, obj):
                     better_object = self._find_better_collocation(
                         'verb_object', verb, obj, sentence
@@ -1008,8 +976,8 @@ class QualityController:
 
         return True
 
-    def _check_semantic_compatibility(self, word1: str, word2: str, 
-                                    relation_type: str) -> bool:
+    def _check_semantic_compatibility(self, word1: str, word2: str,
+                                      relation_type: str) -> bool:
         """检查语义兼容性"""
         # 这里应该使用词向量或知识图谱
         # 现在使用规则匹配
@@ -1045,20 +1013,9 @@ class QualityController:
         Returns:
             更好的搭配表达，如果没有则返回None
         """
-        # 1. 尝试从数据库获取更好的搭配
-        try:
-            better_collocation = self.collocation_database.find_better_collocation(
-                collocation_type, word1, word2, context
-            )
-            if better_collocation:
-                return better_collocation
-        except:
-            # 如果数据库访问失败，使用内置规则
-            pass
-
-        # 2. 使用内置规则作为后备方案
+        # 尝试从预定义规则获取更好的搭配
         # 针对佛教人物的活动描述
-        if collocation_type == 'person_action':
+        if collocation_type == 'subject_verb' or collocation_type == 'person_action':
             return self._find_better_person_action(word1, word2)
 
         # 针对佛教概念的描述方式
@@ -1286,9 +1243,9 @@ class QualityController:
 
     def _complete_sentence(self, sentence: str, semantics: Dict) -> str:
         """补充句子缺失成分"""
-        completeness = semantics['completeness']
+        completeness = semantics.get('completeness', {})
 
-        if not completeness['has_subject']:
+        if not completeness.get('has_subject', True):
             # 从上下文推断主语
             implied_subject = self._infer_subject(sentence, semantics)
             if implied_subject:
@@ -1296,13 +1253,13 @@ class QualityController:
 
         if completeness.get('missing') == 'object_for_transitive_verb':
             # 为及物动词补充宾语
-            for verb in semantics['predicates']:
+            for verb in semantics.get('predicates', []):
                 if self._is_transitive_verb(verb) and verb in sentence:
                     default_object = self._get_default_object(verb)
                     if default_object:
                         verb_pos = sentence.find(verb)
                         sentence = sentence[:verb_pos + len(verb)] + default_object + \
-                                 sentence[verb_pos + len(verb):]
+                                   sentence[verb_pos + len(verb):]
 
         return sentence
 
@@ -1316,7 +1273,7 @@ class QualityController:
             '度众': '菩萨',
         }
 
-        for verb in semantics['predicates']:
+        for verb in semantics.get('predicates', []):
             if verb in verb_subject_mapping:
                 return verb_subject_mapping[verb]
 
@@ -1346,6 +1303,8 @@ class QualityController:
         """确保术语一致性"""
         # 使用适配器获取术语映射
         term_mappings = ProcessingAdapter.get_term_mappings(context)
+        if not term_mappings:
+            return sentence
 
         # 提取所有已使用的术语变体
         term_usage_map = {}
@@ -1384,14 +1343,18 @@ class QualityController:
             'position': 0  # 默认位置
         }
 
-        # 使用更新后的term_database获取翻译
-        best_translation, _ = self.term_database.get_translation(tibetan, term_context)
-
-        if best_translation and best_translation in variants:
-            return best_translation
+        # 尝试使用term_database获取翻译
+        if self.term_database:
+            try:
+                best_translation, _ = self.term_database.get_translation(tibetan, term_context)
+                if best_translation and best_translation in variants:
+                    return best_translation
+            except:
+                pass
 
         # 返回最常用的变体
-        return max(variants, key=lambda v: context.term_usage_count.get(v, 0))
+        term_usage_count = getattr(context, 'term_usage_count', {})
+        return max(variants, key=lambda v: term_usage_count.get(v, 0) if term_usage_count else 0)
 
     def _optimize_expression(self, sentence: str, semantics: Dict) -> str:
         """优化表达方式，使译文更流畅自然"""
@@ -1433,7 +1396,13 @@ class QualityController:
             '给予帮助': '帮助',
             '作出决定': '决定',
             '很大智慧': '深广智慧',
-            '努力修行': '精进修行'
+            '努力修行': '精进修行',
+            '进行禅修': '禅修',
+            '做出理解': '理解',
+            '进行说法': '说法',
+            '实行布施': '布施',
+            '进行思考': '思考',
+            '做好准备': '准备'
         }
 
         for awkward, natural in replacements.items():
@@ -1592,182 +1561,6 @@ class QualityController:
 
         return sentence
 
-    def _add_idiomatic_expressions(self, sentence: str, semantics: Dict) -> str:
-        """添加恰当的成语或固定表达"""
-        # 根据语义场景添加适当的成语或固定表达
-        context = semantics.get('context', '')
-
-        # 根据上下文选择合适的成语
-        if '修行' in sentence and '努力' in sentence:
-            return sentence.replace('努力修行', '精进修行')
-
-        if '智慧' in sentence and '很大' in sentence:
-            return sentence.replace('很大智慧', '甚深智慧')
-
-        if '佛法' in sentence and '学习' in sentence:
-            return sentence.replace('学习佛法', '闻思佛法')
-
-        if '众生' in sentence and '帮助' in sentence:
-            return sentence.replace('帮助众生', '普度众生')
-
-        # 根据语义类型添加固定表达
-        sentence_type = semantics.get('type', '')
-
-        if sentence_type == 'contrast':
-            # 转折类句子
-            if '但是' in sentence:
-                return sentence.replace('但是', '然而')
-            elif '可是' in sentence:
-                return sentence.replace('可是', '然而')
-
-        elif sentence_type == 'cause':
-            # 因果类句子
-            if '因为' in sentence and '所以' in sentence:
-                return sentence.replace('因为', '由于').replace('所以', '因此')
-
-        elif sentence_type == 'condition':
-            # 条件类句子
-            if '如果' in sentence and '就' in sentence:
-                return sentence.replace('如果', '若').replace('就', '则')
-
-        return sentence
-
-    def _improve_rhetoric(self, sentence: str, semantics: Dict) -> str:
-        """优化修辞手法"""
-        # 根据语义和句子类型应用适当的修辞
-        sentence_type = semantics.get('type', '')
-
-        # 对于描述性句子，考虑添加比喻
-        if sentence_type == 'descriptive':
-            if '智慧' in sentence and '如' not in sentence:
-                return sentence.replace('智慧', '如日般的智慧')
-
-            if '慈悲' in sentence and '如' not in sentence:
-                return sentence.replace('慈悲', '如海般的慈悲')
-
-        # 对于强调性句子，考虑使用排比
-        elif sentence_type == 'emphatic':
-            if sentence.count('，') == 2:
-                parts = sentence.split('，')
-                if len(parts) >= 3 and len(parts[0]) > 2 and len(parts[1]) > 2 and len(parts[2]) > 2:
-                    # 检测是否可能形成排比
-                    if parts[0][-1] == parts[1][-1] or parts[1][-1] == parts[2][-1]:
-                        # 调整语气助词，使三部分结构一致
-                        for i in range(3):
-                            if not parts[i].endswith('也') and not parts[i].endswith('矣') and not parts[i].endswith(
-                                    '焉'):
-                                if i < 2:
-                                    parts[i] += '，'
-                                else:
-                                    parts[i] += '。'
-
-                        return ''.join(parts)
-
-        # 对于教义性句子，考虑使用对偶
-        elif sentence_type == 'doctrinal':
-            if '修' in sentence and '证' in sentence:
-                return sentence.replace('修', '修行').replace('证', '证悟')
-
-            if '福' in sentence and '慧' in sentence:
-                return sentence.replace('福', '福德').replace('慧', '智慧')
-
-        return sentence
-
-    def _remove_redundancy(self, sentence: str) -> str:
-        """删除冗余表达"""
-        # 检测并删除重复的语义成分
-        # 使用更智能的方法而不是简单的模式匹配
-
-        # 分词
-        words = list(jieba.cut(sentence))
-
-        # 检测语义重复
-        cleaned_words = []
-        seen_concepts = set()
-
-        for i, word in enumerate(words):
-            # 获取词的语义类别
-            semantic_category = self._get_semantic_category(word)
-
-            if semantic_category:
-                # 检查是否已有相同语义的词
-                if semantic_category not in seen_concepts:
-                    cleaned_words.append(word)
-                    seen_concepts.add(semantic_category)
-                else:
-                    # 检查是否为必要的重复（如强调）
-                    if not self._is_necessary_repetition(words, i, word):
-                        continue
-                    else:
-                        cleaned_words.append(word)
-            else:
-                cleaned_words.append(word)
-
-        return ''.join(cleaned_words)
-
-    def _get_semantic_category(self, word: str) -> Optional[str]:
-        """获取词的语义类别"""
-        # 这里应该使用词义消歧技术
-        # 简化实现
-
-        semantic_categories = {
-            '非常': 'intensifier',
-            '很': 'intensifier',
-            '十分': 'intensifier',
-            '已经': 'aspect',
-            '曾经': 'aspect',
-        }
-
-        return semantic_categories.get(word)
-
-    def _is_necessary_repetition(self, words: List[str], position: int, word: str) -> bool:
-        """判断是否为必要的重复"""
-        # 某些重复是修辞需要，如"慢慢地"、"好好地"
-        if position > 0 and words[position-1] == word:
-            if word in ['慢', '好', '细', '轻']:
-                return True
-
-        # 佛教文献中的特殊重复，如"如是如是"
-        if word == '如是' and position > 0 and words[position-1] == '如是':
-            return True
-
-        return False
-
-    def _optimize_word_order(self, sentence: str, semantics: Dict) -> str:
-        """优化语序"""
-        # 中文的标准语序：主语+状语+谓语+补语+宾语
-        # 但佛教文献可能有特殊语序
-
-        # 这里需要句法分析
-        # 简化处理：确保主语在谓语前
-
-        if semantics['subjects'] and semantics['predicates']:
-            subject = semantics['subjects'][0]
-            predicate = semantics['predicates'][0]
-
-            subj_pos = sentence.find(subject)
-            pred_pos = sentence.find(predicate)
-
-            if subj_pos > pred_pos and subj_pos != -1 and pred_pos != -1:
-                # 需要调整语序
-                # 这里需要更复杂的处理
-                pass
-
-        return sentence
-
-    def _polish_expression(self, sentence: str) -> str:
-        """润色表达"""
-        # 使用更自然的表达方式
-        polish_rules = [
-            (r'进行(\S{2})', r'\1'),  # "进行修行" -> "修行"
-            (r'(\S{2})活动', r'\1'),  # "修行活动" -> "修行"
-        ]
-
-        for pattern, replacement in polish_rules:
-            sentence = re.sub(pattern, replacement, sentence)
-
-        return sentence
-
     def _reconstruct_text(self, sentences: List[str]) -> str:
         """重组文本"""
         # 不是简单地连接句子，而是确保段落连贯
@@ -1814,16 +1607,10 @@ class QualityController:
         words = jieba.cut(sentence)
 
         for word in words:
-            if self._is_buddhist_concept(word) or len(word) > 2:
+            if self.semantic_analyzer._is_buddhist_concept(word) or len(word) > 2:
                 concepts.add(word)
 
         return concepts
-
-    def _is_buddhist_concept(self, word: str) -> bool:
-        """判断是否为佛教概念"""
-        # 应该查询术语数据库
-        key_chars = ['佛', '法', '僧', '禅', '觉', '悟', '修', '证']
-        return any(char in word for char in key_chars)
 
     def _get_sentence_connector(self, prev_sentence: str, curr_sentence: str) -> str:
         """获取句子连接词"""
@@ -1860,8 +1647,6 @@ class QualityController:
         Returns:
             优化后的文本
         """
-        from .adapter import ProcessingAdapter
-
         # 获取文本类型信息
         is_verse = ProcessingAdapter.is_verse(context)
         has_enumeration = ProcessingAdapter.has_enumeration(context)
@@ -1880,15 +1665,15 @@ class QualityController:
         # 3. 添加必要的上下文
         text = self._add_necessary_context(text, buddhist_context)
 
-        # 4. 优化段落结构
-        text = self._optimize_paragraph_structure(text)
+        # 4. 优化段落结构 - 使用修正后的方法名
+        text = self._optimize_global_paragraph_structure(text)
 
         return text
 
     def _ensure_global_consistency(self, text: str, buddhist_context: str) -> str:
         """确保全局一致性"""
-        # 1. 术语一致性
-        text = self._ensure_term_consistency(text, buddhist_context)
+        # 1. 术语一致性 - 重命名方法以避免与单句术语一致性方法冲突
+        text = self._ensure_global_term_consistency(text, buddhist_context)
 
         # 2. 称呼一致性
         text = self._ensure_name_consistency(text)
@@ -1901,9 +1686,10 @@ class QualityController:
 
         return text
 
-    def _ensure_term_consistency(self, text: str, buddhist_context: str) -> str:
-        """确保术语使用一致"""
-        # 术语变体映射
+    # 重命名这个方法，避免与 _ensure_term_consistency 重复
+    def _ensure_global_term_consistency(self, text: str, buddhist_context: str) -> str:
+        """确保全局术语一致性"""
+        # 术语一致性 - 这里使用特定于佛教语境的变体映射
         term_variants = {
             'MADHYAMIKA': {  # 中观派术语变体
                 '空性': ['空', '性空', '自性空'],
@@ -2129,19 +1915,20 @@ class QualityController:
         # 只有确实需要时才添加上下文
         if needs_context:
             # 最多添加一个简短前缀，不添加术语注解
-            if buddhist_context == 'MADHYAMIKA' and '空性' in text and not '中观' in text:
+            if buddhist_context == 'MADHYAMIKA' and '空性' in text and '中观' not in text:
                 text = '依中观义，' + text
 
-            elif buddhist_context == 'YOGACARA' and '唯识' in text and not '唯识宗' in text:
+            elif buddhist_context == 'YOGACARA' and '唯识' in text and '唯识宗' not in text:
                 text = '依唯识义，' + text
 
-            elif buddhist_context == 'VAJRAYANA' and '密' in text and not '密宗' in text:
+            elif buddhist_context == 'VAJRAYANA' and '密' in text and '密宗' not in text:
                 text = '依密乘义，' + text
 
         return text
 
-    def _optimize_paragraph_structure(self, text: str) -> str:
-        """优化段落结构"""
+    # 重命名此方法，避免与之前的方法重复
+    def _optimize_global_paragraph_structure(self, text: str) -> str:
+        """优化全局段落结构"""
         # 分析当前段落结构
         paragraphs = text.split('\n\n')
 
@@ -2190,166 +1977,11 @@ class QualityController:
 
         return '\n\n'.join(paragraphs)
 
-    def _ensure_global_term_consistency(self, text: str, context) -> str:
-        """确保全局术语一致性"""
-        # 获取上下文中的术语信息
-        term_mappings = getattr(context, 'term_mappings', {})
-        if not term_mappings:
-            return text
-
-        # 确定每个藏文术语的首选翻译
-        preferred_translations = {}
-        for term_id, term_info in term_mappings.items():
-            tibetan = term_info.get('tibetan', '')
-            chinese = term_info.get('chinese', '')
-            if tibetan and chinese:
-                if tibetan not in preferred_translations:
-                    preferred_translations[tibetan] = chinese
-
-        # 对文本进行统一替换
-        for tibetan, preferred in preferred_translations.items():
-            # 查找该术语的所有变体翻译
-            variants = self._find_term_variants(tibetan, context)
-            for variant in variants:
-                if variant != preferred:
-                    text = text.replace(variant, preferred)
-
-        return text
-
-    def _find_term_variants(self, tibetan: str, context) -> Set[str]:
-        """查找术语的所有翻译变体"""
-        variants = set()
-        for term_info in getattr(context, 'term_mappings', {}).values():
-            if term_info.get('tibetan') == tibetan:
-                variants.add(term_info.get('chinese', ''))
-        return variants
-
-    def _optimize_paragraph_structure(self, text: str) -> str:
-        """优化段落结构"""
-        paragraphs = text.split('\n\n')
-        optimized = []
-
-        for para in paragraphs:
-            if not para.strip():
-                continue
-
-            # 检查段落长度
-            if len(para) > 500:
-                # 尝试分割长段落
-                split_paras = self._split_long_paragraph(para)
-                optimized.extend(split_paras)
-            elif len(para) < 50 and optimized:
-                # 短段落可能需要合并
-                optimized[-1] += para
-            else:
-                optimized.append(para)
-
-        return '\n\n'.join(optimized)
-
-    def _split_long_paragraph(self, paragraph: str) -> List[str]:
-        """分割长段落"""
-        # 寻找合适的分割点
-        sentences = re.split(r'[。！？]', paragraph)
-
-        paragraphs = []
-        current = ""
-
-        for sent in sentences:
-            if not sent.strip():
-                continue
-
-            current += sent + '。'
-
-            # 在语义转折处分割
-            if len(current) > 200 and self._is_semantic_boundary(sent):
-                paragraphs.append(current.strip())
-                current = ""
-
-        if current.strip():
-            paragraphs.append(current.strip())
-
-        return paragraphs
-
-    def _is_semantic_boundary(self, sentence: str) -> bool:
-        """判断是否为语义边界"""
-        boundary_markers = ['其次', '再者', '最后', '总之', '因此', '所以']
-        return any(marker in sentence for marker in boundary_markers)
-
-    def _fix_punctuation(self, text: str) -> str:
-        """修正标点符号"""
-        # 智能标点修正，不只是模式替换
-
-        # 修正引号
-        text = self._fix_quotes(text)
-
-        # 修正句号
-        text = self._fix_periods(text)
-
-        # 修正逗号
-        text = self._fix_commas(text)
-
-        return text
-
-    def _fix_quotes(self, text: str) -> str:
-        """修正引号使用"""
-        # 确保引号配对
-        quote_stack = []
-        fixed_text = []
-
-        i = 0
-        while i < len(text):
-            char = text[i]
-
-            if char == '"':
-                if not quote_stack:
-                    quote_stack.append('"')
-                    fixed_text.append('"')
-                else:
-                    quote_stack.pop()
-                    fixed_text.append('"')
-            elif char == '"' and quote_stack:
-                quote_stack.pop()
-                fixed_text.append(char)
-            elif char == '"' and not quote_stack:
-                quote_stack.append('"')
-                fixed_text.append('"')
-            else:
-                fixed_text.append(char)
-
-            i += 1
-
-        # 如果还有未配对的引号
-        if quote_stack:
-            fixed_text.append('"')
-
-        return ''.join(fixed_text)
-
-    def _fix_periods(self, text: str) -> str:
-        """修正句号使用"""
-        # 删除重复句号
-        text = re.sub(r'。{2,}', '。', text)
-
-        # 确保段落末尾有句号
-        lines = text.split('\n')
-        fixed_lines = []
-
-        for line in lines:
-            line = line.strip()
-            if line and not line.endswith(('。', '！', '？', '：', '；', '"', "'")):
-                line += '。'
-            fixed_lines.append(line)
-
-        return '\n'.join(fixed_lines)
-
-    def _fix_commas(self, text: str) -> str:
-        """修正逗号使用"""
-        # 删除句首逗号
-        text = re.sub(r'^，', '', text, flags=re.MULTILINE)
-
-        # 删除重复逗号
-        text = re.sub(r'，{2,}', '，', text)
-
-        # 修正逗号和句号连用
-        text = re.sub(r'，。', '。', text)
-
-        return text
+    def set_database(self, database):
+        """设置术语数据库"""
+        self.term_database = database
+        # 同时更新依赖组件的数据库引用
+        if hasattr(self, 'semantic_analyzer') and self.semantic_analyzer:
+            self.semantic_analyzer.term_database = database
+        if hasattr(self, 'concept_graph') and self.concept_graph:
+            self.concept_graph.term_database = database

@@ -4,6 +4,9 @@ python scripts/sync_database.py --db your_database.db --full-sync
 设置定期任务，确保数据库一致性（没试过）
 python scripts/sync_database.py --db your_database.db --check-consistency
 
+测试单句：
+python main.py translate "སངས་རྒྱས་ཀྱིས་ཆོས་གསུངས།"
+
 从文件翻译文本：
 python main.py translate -i test_data/simple.txt -o test_data/simple_output.txt
 
